@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using ICSharpCode.NRefactory.CSharp;
-using ICSharpCode.NRefactory.Editor;
+//using ICSharpCode.NRefactory.Editor;
 
 namespace Terraria.ModLoader.Setup
 {
@@ -14,14 +14,16 @@ namespace Terraria.ModLoader.Setup
 		public static CSharpFormattingOptions tModLoaderFormat = FormattingOptionsFactory.CreateAllman();
 
 		public static string FormatCode(string text, CSharpFormattingOptions options, CancellationToken ct) {
-			var formatter = new CSharpFormatter(options) { FormattingMode = FormattingMode.Intrusive };
+			//TODO
+			throw new NotImplementedException();
+			/*var formatter = new CSharpFormatter(options) { FormattingMode = FormattingMode.Intrusive };
 			text = text.Replace("\r\n\r\n", "\r\n");
 
 			var doc = new StringBuilderDocument(text);
 			var syntaxTree = SyntaxTree.Parse(doc, doc.FileName, null, ct);
 			formatter.AnalyzeFormatting(doc, syntaxTree, ct).ApplyChanges();
 
-			return doc.Text;
+			return doc.Text;*/
 		}
 
 		public static void Format(string path, CSharpFormattingOptions options, CancellationToken ct) {

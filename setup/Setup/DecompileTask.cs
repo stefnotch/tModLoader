@@ -5,11 +5,6 @@ using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
 using System.Xml;
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Ast;
-using ICSharpCode.ILSpy;
-using ICSharpCode.ILSpy.TextView;
-using Mono.Cecil;
 using Terraria.ModLoader.Properties;
 using static Terraria.ModLoader.Setup.Program;
 
@@ -28,381 +23,27 @@ using dnSpy.Decompiler.MSBuild;
 
 namespace Terraria.ModLoader.Setup
 {
-	public class OldDecompileTask : Task
-	{
-		private class EmbeddedAssemblyResolver : BaseAssemblyResolver
-		{
-			private Dictionary<string, AssemblyDefinition> cache = new Dictionary<string, AssemblyDefinition>();
-			public ModuleDefinition baseModule;
-
-			public EmbeddedAssemblyResolver()
-			{
-				AddSearchDirectory(SteamDir);
-			}
-
-			public override AssemblyDefinition Resolve(AssemblyNameReference name, ReaderParameters parameters)
-			{
-				lock (this)
-				{
-					AssemblyDefinition assemblyDefinition;
-					if (cache.TryGetValue(name.FullName, out assemblyDefinition))
-						return assemblyDefinition;
-
-					//ignore references to other mscorlib versions, they are unneeded and produce namespace conflicts
-					if (name.Name == "mscorlib" && name.Version.Major != 4)
-						goto skip;
-
-					//look in the base module's embedded resources
-					if (baseModule != null)
-					{
-						var resName = name.Name + ".dll";
-						var res =
-							baseModule.Resources.OfType<Mono.Cecil.EmbeddedResource>()
-								.SingleOrDefault(r => r.Name.EndsWith(resName));
-						if (res != null)
-							assemblyDefinition = AssemblyDefinition.ReadAssembly(res.GetResourceStream(), parameters);
-					}
-
-					if (assemblyDefinition == null)
-						assemblyDefinition = base.Resolve(name, parameters);
-
-					skip:
-					cache[name.FullName] = assemblyDefinition;
-					return assemblyDefinition;
-				}
-			}
-		}
-
-		private static readonly CSharpLanguage lang = new CSharpLanguage();
-		private static readonly Guid clientGuid = new Guid("3996D5FA-6E59-4FE4-9F2B-40EEEF9645D5");
-		private static readonly Guid serverGuid = new Guid("85BF1171-A0DC-4696-BFA4-D6E9DC4E0830");
-		public static readonly Version clientVersion = new Version(Settings.Default.ClientVersion);
-		public static readonly Version serverVersion = new Version(Settings.Default.ServerVersion);
-
-		public readonly string srcDir;
-		public readonly bool serverOnly;
-
-		public string FullSrcDir => Path.Combine(baseDir, srcDir);
-
-		public OldDecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface)
-		{
-			this.srcDir = srcDir;
-			this.serverOnly = serverOnly;
-		}
-
-		public override bool ConfigurationDialog()
-		{
-			if (File.Exists(TerrariaPath) && File.Exists(TerrariaServerPath))
-				return true;
-
-			return (bool)taskInterface.Invoke(new Func<bool>(SelectTerrariaDialog));
-		}
-
-		public override bool StartupWarning()
-		{
-			return MessageBox.Show(
-					"Decompilation may take a long time (1-3 hours) and consume a lot of RAM (2GB will not be enough)",
-					"Ready to Decompile", MessageBoxButtons.OKCancel, MessageBoxIcon.Information)
-				== DialogResult.OK;
-		}
-
-		public override void Run()
-		{
-			taskInterface.SetStatus("Deleting Old Src");
-
-			if (Directory.Exists(FullSrcDir))
-				Directory.Delete(FullSrcDir, true);
-
-			var options = new DecompilationOptions
-			{
-				FullDecompilation = true,
-				CancellationToken = taskInterface.CancellationToken(),
-				SaveAsProjectDirectory = FullSrcDir
-			};
-
-			var items = new List<WorkItem>();
-
-			var serverModule = ReadModule(TerrariaServerPath, serverVersion);
-			var serverSources = GetCodeFiles(serverModule, options).ToList();
-			var serverResources = GetResourceFiles(serverModule, options).ToList();
-
-			var sources = serverSources;
-			var resources = serverResources;
-			var infoModule = serverModule;
-			if (!serverOnly)
-			{
-				var clientModule = !serverOnly ? ReadModule(TerrariaPath, clientVersion) : null;
-				var clientSources = GetCodeFiles(clientModule, options).ToList();
-				var clientResources = GetResourceFiles(clientModule, options).ToList();
-
-				sources = CombineFiles(clientSources, sources, src => src.Key);
-				resources = CombineFiles(clientResources, resources, res => res.Item1);
-				infoModule = clientModule;
-
-				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension,
-					() => WriteProjectFile(clientModule, clientGuid, clientSources, clientResources, options)));
-
-				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension + ".user",
-					() => WriteProjectUserFile(clientModule, SteamDir, options)));
-			}
-
-			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension,
-				() => WriteProjectFile(serverModule, serverGuid, serverSources, serverResources, options)));
-
-			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension + ".user",
-				() => WriteProjectUserFile(serverModule, SteamDir, options)));
-
-			items.Add(new WorkItem("Writing Assembly Info",
-				() => WriteAssemblyInfo(infoModule, options)));
-
-			items.AddRange(sources.Select(src => new WorkItem(
-				"Decompiling: " + src.Key, () => DecompileSourceFile(src, options))));
-
-			items.AddRange(resources.Select(res => new WorkItem(
-				"Extracting: " + res.Item1, () => ExtractResource(res, options))));
-
-			ExecuteParallel(items, maxDegree: Settings.Default.SingleDecompileThread ? 1 : 0);
-		}
-
-		protected ModuleDefinition ReadModule(string modulePath, Version version)
-		{
-			taskInterface.SetStatus("Loading " + Path.GetFileName(modulePath));
-			var resolver = new EmbeddedAssemblyResolver();
-			var module = ModuleDefinition.ReadModule(modulePath,
-				new ReaderParameters { AssemblyResolver = resolver });
-			resolver.baseModule = module;
-
-			if (module.Assembly.Name.Version != version)
-				throw new Exception($"{module.Assembly.Name.Name} version {module.Assembly.Name.Version}. Expected {version}");
-
-			return module;
-		}
-
-		#region ReflectedMethods
-		private static readonly MethodInfo _IncludeTypeWhenDecompilingProject = typeof(CSharpLanguage)
-			.GetMethod("IncludeTypeWhenDecompilingProject", BindingFlags.NonPublic | BindingFlags.Instance);
-
-		public static bool IncludeTypeWhenDecompilingProject(TypeDefinition type, DecompilationOptions options)
-		{
-			return (bool)_IncludeTypeWhenDecompilingProject.Invoke(lang, new object[] { type, options });
-		}
-
-		private static readonly MethodInfo _WriteProjectFile = typeof(CSharpLanguage)
-			.GetMethod("WriteProjectFile", BindingFlags.NonPublic | BindingFlags.Instance);
-
-		public static void WriteProjectFile(TextWriter writer, IEnumerable<Tuple<string, string>> files, ModuleDefinition module)
-		{
-			_WriteProjectFile.Invoke(lang, new object[] { writer, files, module });
-		}
-
-		private static readonly MethodInfo _CleanUpName = typeof(DecompilerTextView)
-			.GetMethod("CleanUpName", BindingFlags.NonPublic | BindingFlags.Static);
-
-		public static string CleanUpName(string name)
-		{
-			return (string)_CleanUpName.Invoke(null, new object[] { name });
-		}
-		#endregion
-
-		//from ICSharpCode.ILSpy.CSharpLanguage
-		private static IEnumerable<IGrouping<string, TypeDefinition>> GetCodeFiles(ModuleDefinition module, DecompilationOptions options)
-		{
-			return module.Types.Where(t => IncludeTypeWhenDecompilingProject(t, options))
-				.GroupBy(type =>
-				{
-					var file = CleanUpName(type.Name) + lang.FileExtension;
-					return string.IsNullOrEmpty(type.Namespace) ? file : Path.Combine(CleanUpName(type.Namespace), file);
-				}, StringComparer.OrdinalIgnoreCase);
-		}
-
-		private static IEnumerable<Tuple<string, Mono.Cecil.EmbeddedResource>> GetResourceFiles(ModuleDefinition module, DecompilationOptions options)
-		{
-			return module.Resources.OfType<Mono.Cecil.EmbeddedResource>().Select(res =>
-			{
-				var path = res.Name;
-				path = path.Replace("Terraria.Libraries.", "Terraria.Libraries\\");
-				if (path.EndsWith(".dll"))
-				{
-					var asmRef = module.AssemblyReferences.SingleOrDefault(r => path.EndsWith(r.Name + ".dll"));
-					if (asmRef != null)
-						path = path.Substring(0, path.Length - asmRef.Name.Length - 5) +
-						Path.DirectorySeparatorChar + asmRef.Name + ".dll";
-				}
-				return Tuple.Create(path, res);
-			});
-		}
-
-		private static List<T> CombineFiles<T, K>(IEnumerable<T> client, IEnumerable<T> server, Func<T, K> key)
-		{
-			var list = client.ToList();
-			var set = new HashSet<K>(list.Select(key));
-			list.AddRange(server.Where(src => !set.Contains(key(src))));
-			return list;
-		}
-
-		private static void ExtractResource(Tuple<string, Mono.Cecil.EmbeddedResource> res, DecompilationOptions options)
-		{
-			var path = Path.Combine(options.SaveAsProjectDirectory, res.Item1);
-			CreateParentDirectory(path);
-
-			var s = res.Item2.GetResourceStream();
-			s.Position = 0;
-			using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
-				s.CopyTo(fs);
-		}
-
-		private static void DecompileSourceFile(IGrouping<string, TypeDefinition> src, DecompilationOptions options)
-		{
-			var path = Path.Combine(options.SaveAsProjectDirectory, src.Key);
-			CreateParentDirectory(path);
-
-			using (var w = new StreamWriter(path))
-			{
-				var builder = new AstBuilder(
-					new DecompilerContext(src.First().Module)
-					{
-						CancellationToken = options.CancellationToken,
-						Settings = options.DecompilerSettings
-					});
-
-				foreach (var type in src)
-					builder.AddType(type);
-
-				builder.GenerateCode(new PlainTextOutput(w));
-			}
-		}
-
-		private static void WriteAssemblyInfo(ModuleDefinition module, DecompilationOptions options)
-		{
-			var path = Path.Combine(options.SaveAsProjectDirectory, Path.Combine("Properties", "AssemblyInfo" + lang.FileExtension));
-			CreateParentDirectory(path);
-
-			using (var w = new StreamWriter(path))
-			{
-				var builder = new AstBuilder(
-					new DecompilerContext(module)
-					{
-						CancellationToken = options.CancellationToken,
-						Settings = options.DecompilerSettings
-					});
-
-				builder.AddAssembly(module, true);
-				builder.GenerateCode(new PlainTextOutput(w));
-			}
-		}
-
-		private static void WriteProjectFile(ModuleDefinition module, Guid guid,
-				IEnumerable<IGrouping<string, TypeDefinition>> sources,
-				IEnumerable<Tuple<string, Mono.Cecil.EmbeddedResource>> resources,
-				DecompilationOptions options)
-		{
-
-			//flatten the file list
-			var files = sources.Select(src => Tuple.Create("Compile", src.Key))
-				.Concat(resources.Select(res => Tuple.Create("EmbeddedResource", res.Item1)))
-				.Concat(new[] { Tuple.Create("Compile", Path.Combine("Properties", "AssemblyInfo" + lang.FileExtension)) });
-
-			//fix the guid and add a value to the CommandLineArguments field so the method doesn't crash
-			var claField = typeof(App).GetField("CommandLineArguments", BindingFlags.Static | BindingFlags.NonPublic);
-			var claType = typeof(App).Assembly.GetType("ICSharpCode.ILSpy.CommandLineArguments");
-			var claConstructor = claType.GetConstructors()[0];
-			var claInst = claConstructor.Invoke(new object[] { Enumerable.Empty<string>() });
-			var guidField = claType.GetField("FixedGuid");
-			guidField.SetValue(claInst, guid);
-			claField.SetValue(null, claInst);
-
-			var path = Path.Combine(options.SaveAsProjectDirectory,
-				Path.GetFileNameWithoutExtension(module.Name) + lang.ProjectFileExtension);
-			CreateParentDirectory(path);
-
-			using (var w = new StreamWriter(path))
-				WriteProjectFile(w, files, module);
-			using (var w = new StreamWriter(path, true))
-				w.Write(Environment.NewLine);
-		}
-
-		private static void WriteProjectUserFile(ModuleDefinition module, string debugWorkingDir, DecompilationOptions options)
-		{
-			var path = Path.Combine(options.SaveAsProjectDirectory,
-				Path.GetFileNameWithoutExtension(module.Name) + lang.ProjectFileExtension + ".user");
-			CreateParentDirectory(path);
-
-			using (var w = new StreamWriter(path))
-			using (var xml = new XmlTextWriter(w))
-			{
-				xml.Formatting = Formatting.Indented;
-				xml.WriteStartDocument();
-				xml.WriteStartElement("Project", "http://schemas.microsoft.com/developer/msbuild/2003");
-				xml.WriteAttributeString("ToolsVersion", "4.0");
-				xml.WriteStartElement("PropertyGroup");
-				xml.WriteAttributeString("Condition", "'$(Configuration)' == 'Debug'");
-				xml.WriteStartElement("StartWorkingDirectory");
-				xml.WriteValue(debugWorkingDir);
-				xml.WriteEndElement();
-				xml.WriteEndElement();
-				xml.WriteEndDocument();
-			}
-		}
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 	public class DecompileTask : Task
 	{
 		private readonly string _srcDir;
 		private readonly bool _serverOnly;
 		public DecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface)
 		{
-			_srcDir = srcDir;
+			_srcDir = Path.Combine(baseDir, srcDir);
 			_serverOnly = serverOnly;
-			throw new NotImplementedException("serverOnly");
+			//TODO: ServerOnly doesn't do anything
+			//throw new NotImplementedException("serverOnly");
 		}
 
 
 		public override void Run()
 		{
-			string[] args = { "stuff" };
-			new DnSpyDecompiler() { OutputDir = _srcDir }.Run(args);
+			//TODO: Remove args
+			string[] args = { };
+			new DnSpyDecompiler(new List<string> { TerrariaPath }, _srcDir)
+			{
+				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
+			}.Run(args);
 		}
 	}
 
@@ -412,7 +53,7 @@ namespace Terraria.ModLoader.Setup
 	public sealed class DnSpyDecompiler
 	{
 		string language = DecompilerConstants.LANGUAGE_CSHARP.ToString();
-		
+
 		ProjectVersion projectVersion = ProjectVersion.VS2015;
 		string outputDir;
 		string slnName = "solution.sln";
@@ -421,43 +62,48 @@ namespace Terraria.ModLoader.Setup
 
 		int spaces = 4;
 
+
+		const bool useGac = true;
+
+
 		readonly DecompilationContext decompilationContext;
 		readonly ModuleContext moduleContext;
 		readonly AssemblyResolver assemblyResolver;
 		readonly IBamlDecompiler bamlDecompiler;
 
+		List<string> files;
 		static readonly char PATHS_SEP = Path.PathSeparator;
 
 
-
+		//Unchecked:
 
 
 		bool isRecursive = false;
-		bool useGac = true;
+
 		bool addCorlibRef = true;
 		bool unpackResources = true;
 		bool createResX = true;
 		bool decompileBaml = true;
 		Guid projectGuid = Guid.NewGuid();
 
-		int mdToken;
-		
-		string typeName;
 
 
-		
-		readonly List<string> files;
+
 		readonly List<string> asmPaths;
 		readonly List<string> userGacPaths;
 		readonly List<string> gacFiles;
 
 
 
-		
 
-		public DnSpyDecompiler()
+
+		public DnSpyDecompiler(List<string> filesToDecompile, string outputDirectory)
 		{
-			files = new List<string>();
+			files = filesToDecompile;
+			outputDir = outputDirectory;
+
+
+
 			asmPaths = new List<string>();
 			userGacPaths = new List<string>();
 			gacFiles = new List<string>();
@@ -476,7 +122,6 @@ namespace Terraria.ModLoader.Setup
 			allLanguages = langs.ToArray();
 		}
 
-		public string OutputDir { get { return outputDir; } set { outputDir = value; } }
 
 		static IEnumerable<IDecompiler> GetAllLanguages()
 		{
@@ -613,7 +258,6 @@ namespace Terraria.ModLoader.Setup
 			new UsageInfo("--project-guid", "N", "project guid"),
 			new UsageInfo("-t", "name", "decompile the type with the specified name to stdout. Either Namespace.Name or Name, case insensitive"),
 			new UsageInfo("--type", "name", "same as -t"),
-			new UsageInfo("--md", "N", "decompile the member with metadata token N to stdout"),
 			new UsageInfo("--gac-file", "assembly", "decompile an assembly from the GAC. Use full assembly name to use an exact version."),
 			new UsageInfo("-r", null, "recursive search for .NET files to decompile"),
 			new UsageInfo("-o", "outdir", "output directory"),
@@ -634,7 +278,6 @@ namespace Terraria.ModLoader.Setup
 			new HelpInfo(@"Decompiles all .NET files in the above directory and saves files to C:\out\path", @"-o C:\out\path C:\some\path"),
 			new HelpInfo(@"Decompiles all .NET files in the above directory and all sub directories", @"-o C:\out\path -r C:\some\path"),
 			new HelpInfo(@"Decompiles all *.dll .NET files in the above directory and saves files to C:\out\path", @"-o C:\out\path C:\some\path\*.dll"),
-			new HelpInfo(@"Decompiles the member with token 0x06000123", @"--md 0x06000123 file.dll"),
 			new HelpInfo(@"Decompiles System.Int32 from mscorlib", @"-t system.int32 --gac-file ""mscorlib, Version=4.0.0.0"""),
 		};
 
@@ -676,12 +319,9 @@ namespace Terraria.ModLoader.Setup
 
 		const string BOOLEAN_NO_PREFIX = "no-";
 		const string BOOLEAN_DONT_PREFIX = "dont-";
-		
+
 		void ParseCommandLine(string[] args)
 		{
-			if (args.Length == 0)
-				throw new Exception("No options specified");
-
 			bool canParseCommands = true;
 			IDecompiler lang = null;
 			Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = null;
@@ -729,10 +369,6 @@ namespace Terraria.ModLoader.Setup
 							i++;
 							break;
 
-						case "--no-gac":
-							useGac = false;
-							break;
-
 						case "--no-stdlib":
 							addCorlibRef = false;
 							break;
@@ -747,23 +383,6 @@ namespace Terraria.ModLoader.Setup
 
 						case "--no-baml":
 							decompileBaml = false;
-							break;
-							
-						case "-t":
-						case "--type":
-							if (next == null)
-								throw new Exception("Missing full name of type");
-							i++;
-							typeName = next;
-							break;
-
-						case "--md":
-							if (next == null)
-								throw new Exception("Missing metadata token");
-							i++;
-							mdToken = SimpleTypeConverter.ParseInt32(next, int.MinValue, int.MaxValue, out error);
-							if (!string.IsNullOrEmpty(error))
-								throw new Exception(error);
 							break;
 
 						case "--gac-file":
@@ -863,60 +482,22 @@ namespace Terraria.ModLoader.Setup
 			foreach (var file in files.OrderBy(a => a.Module.Location, StringComparer.InvariantCultureIgnoreCase))
 				file.ProjectGuid = new Guid(string.Format(guidFormat, guidNum++));
 
-			if (mdToken != 0 || typeName != null)
-			{
-				if (files.Count == 0)
-					throw new Exception("Missing .NET filename");
-				if (files.Count != 1)
-					throw new Exception("Only one file can be decompiled when using --md");
+			if (string.IsNullOrEmpty(outputDir))
+				throw new Exception("Missing output directory");
+			if (GetLanguage().ProjectFileExtension == null)
+				throw new Exception(string.Format("Language {0} doesn't support creating project files", GetLanguage().UniqueNameUI));
 
-				IMemberDef member;
-				if (typeName != null)
-					member = FindType(files[0].Module, typeName);
-				else
-					member = files[0].Module.ResolveToken(mdToken) as IMemberDef;
-				if (member == null)
-				{
-					if (typeName != null)
-						throw new Exception(string.Format("Type {0} couldn't be found", typeName));
-					throw new Exception("Invalid metadata token");
-				}
+			var options = new ProjectCreatorOptions(outputDir, decompilationContext.CancellationToken);
+			options.ProjectVersion = projectVersion;
+			options.NumberOfThreads = numThreads;
+			options.ProjectModules.AddRange(files);
+			options.UserGACPaths.AddRange(userGacPaths);
+			options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
+			if (!string.IsNullOrEmpty(slnName))
+				options.SolutionFilename = slnName;
+			var creator = new MSBuildProjectCreator(options);
+			creator.Create();
 
-				var writer = Console.Out;
-				IDecompilerOutput output = new TextWriterDecompilerOutput(writer, GetIndenter());
-
-				var lang = GetLanguage();
-				if (member is MethodDef)
-					lang.Decompile((MethodDef)member, output, decompilationContext);
-				else if (member is FieldDef)
-					lang.Decompile((FieldDef)member, output, decompilationContext);
-				else if (member is PropertyDef)
-					lang.Decompile((PropertyDef)member, output, decompilationContext);
-				else if (member is EventDef)
-					lang.Decompile((EventDef)member, output, decompilationContext);
-				else if (member is TypeDef)
-					lang.Decompile((TypeDef)member, output, decompilationContext);
-				else
-					throw new Exception("Only types, methods, fields, events and properties can be decompiled");
-			}
-			else
-			{
-				if (string.IsNullOrEmpty(outputDir))
-					throw new Exception("Missing output directory");
-				if (GetLanguage().ProjectFileExtension == null)
-					throw new Exception(string.Format("Language {0} doesn't support creating project files", GetLanguage().UniqueNameUI));
-
-				var options = new ProjectCreatorOptions(outputDir, decompilationContext.CancellationToken);
-				options.ProjectVersion = projectVersion;
-				options.NumberOfThreads = numThreads;
-				options.ProjectModules.AddRange(files);
-				options.UserGACPaths.AddRange(userGacPaths);
-				options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
-				if (!string.IsNullOrEmpty(slnName))
-					options.SolutionFilename = slnName;
-				var creator = new MSBuildProjectCreator(options);
-				creator.Create();
-			}
 		}
 
 		Indenter GetIndenter()
@@ -1191,6 +772,20 @@ namespace Terraria.ModLoader.Setup
 		}
 
 		IDecompiler[] AllLanguages => allLanguages;
+
+		public int NumThreads
+		{
+			get
+			{
+				return numThreads;
+			}
+
+			set
+			{
+				numThreads = value;
+			}
+		}
+
 		readonly IDecompiler[] allLanguages;
 
 

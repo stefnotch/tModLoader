@@ -49,34 +49,38 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="dnlib">
+    <Reference Include="dnlib, Version=1.6.0.0, Culture=neutral, PublicKeyToken=50e96378b6e77999, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
       <HintPath>lib\dnSpy\dnlib.dll</HintPath>
     </Reference>
-    <Reference Include="dnSpy.Contracts.Logic">
+    <Reference Include="dnSpy.BamlDecompiler.x, Version=3.0.1.0, Culture=neutral, PublicKeyToken=9813e10cffb0cdd6, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>lib\dnSpy\dnSpy.BamlDecompiler.x.dll</HintPath>
+    </Reference>
+    <Reference Include="dnSpy.Contracts.Logic, Version=3.0.1.0, Culture=neutral, PublicKeyToken=9813e10cffb0cdd6, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
       <HintPath>lib\dnSpy\dnSpy.Contracts.Logic.dll</HintPath>
     </Reference>
-    <Reference Include="dnSpy.Decompiler">
+    <Reference Include="dnSpy.Decompiler, Version=3.0.1.0, Culture=neutral, PublicKeyToken=9813e10cffb0cdd6, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
       <HintPath>lib\dnSpy\dnSpy.Decompiler.dll</HintPath>
     </Reference>
+    <Reference Include="dnSpy.Decompiler.ILSpy.Core, Version=3.0.1.0, Culture=neutral, PublicKeyToken=9813e10cffb0cdd6, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>lib\dnSpy\dnSpy.Decompiler.ILSpy.Core.dll</HintPath>
+    </Reference>
     <Reference Include="ICSharpCode.Decompiler">
-      <HintPath>lib\ICSharpCode.Decompiler.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>lib\dnSpy\ICSharpCode.Decompiler.dll</HintPath>
     </Reference>
     <Reference Include="ICSharpCode.NRefactory">
-      <HintPath>lib\ICSharpCode.NRefactory.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>lib\dnSpy\ICSharpCode.NRefactory.dll</HintPath>
     </Reference>
     <Reference Include="ICSharpCode.NRefactory.CSharp">
-      <HintPath>lib\ICSharpCode.NRefactory.CSharp.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>lib\dnSpy\ICSharpCode.NRefactory.CSharp.dll</HintPath>
     </Reference>
-    <Reference Include="ILSpy">
-      <HintPath>lib\ILSpy.exe</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Mono.Cecil">
-      <HintPath>lib\Mono.Cecil.dll</HintPath>
-      <Private>False</Private>
+    <Reference Include="ICSharpCode.NRefactory.VB, Version=5.0.0.0, Culture=neutral, PublicKeyToken=d4bfe873e7598c49, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>lib\dnSpy\ICSharpCode.NRefactory.VB.dll</HintPath>
     </Reference>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
@@ -86,7 +90,6 @@
     <Reference Include="System.Xaml" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.Data" />
     <Reference Include="System.Deployment" />
     <Reference Include="System.Drawing" />
