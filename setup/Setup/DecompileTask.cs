@@ -177,6 +177,17 @@ namespace Terraria.ModLoader.Setup
 		{
 			try
 			{
+				//Messing around with some internal stuff...
+				const string NO_TOKENS_COMMENT = "--no-tokens";
+				IDecompiler lang = GetLanguage();
+				Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = CreateDecompilerOptionsDictionary(lang);
+
+				if(langDict.ContainsKey(NO_TOKENS_COMMENT))
+				{
+					langDict[NO_TOKENS_COMMENT].Item1.Value=false;
+				}
+
+
 				ParseCommandLine(args);
 				if (allLanguages.Length == 0)
 					throw new Exception("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
