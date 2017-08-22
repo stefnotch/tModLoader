@@ -14,14 +14,8 @@ using Terraria.ModLoader.Properties;
 using static Terraria.ModLoader.Setup.Program;
 
 
-
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Reflection;
 using System.Security;
 using System.Text;
 using dnlib.DotNet;
@@ -34,7 +28,7 @@ using dnSpy.Decompiler.MSBuild;
 
 namespace Terraria.ModLoader.Setup
 {
-	public class DecompileTask : Task
+	public class OldDecompileTask : Task
 	{
 		private class EmbeddedAssemblyResolver : BaseAssemblyResolver
 		{
@@ -86,7 +80,7 @@ namespace Terraria.ModLoader.Setup
 
 		public string FullSrcDir => Path.Combine(baseDir, srcDir);
 
-		public DecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface) {
+		public OldDecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface) {
 			this.srcDir = srcDir;
 			this.serverOnly = serverOnly;
 		}
@@ -327,161 +321,62 @@ namespace Terraria.ModLoader.Setup
 
 
 
-	[Serializable]
-	sealed class ErrorException : Exception
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	public class DecompileTask : Task
 	{
-		public ErrorException(string s)
-			: base(s)
+		public DecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface)
 		{
+			throw new NotImplementedException();
+		}
+
+		public override void Run()
+		{
+			string[] args = { "stuff" };
+			new DnSpyDecompiler().Run(args);
 		}
 	}
 
-	static class Program
-	{
-		static int Main(string[] args)
-		{
-			if (!dnlib.Settings.IsThreadSafe)
-			{
-				Console.WriteLine("dnlib wasn't compiled with THREAD_SAFE defined");
-				return 1;
-			}
 
-			var oldEncoding = Console.OutputEncoding;
-			try
-			{
-				// Make sure russian and chinese characters are shown correctly
-				Console.OutputEncoding = Encoding.UTF8;
 
-				return new DnSpyDecompiler().Run(args);
-			}
-			catch (Exception ex)
-			{
-				Console.Error.WriteLine(string.Format("{0}", ex));
-				return 1;
-			}
-			finally
-			{
-				Console.OutputEncoding = oldEncoding;
-			}
-		}
-	}
-
-	struct ConsoleColorPair
-	{
-		public ConsoleColor? Foreground { get; }
-		public ConsoleColor? Background { get; }
-		public ConsoleColorPair(ConsoleColor? foreground, ConsoleColor? background)
-		{
-			Foreground = foreground;
-			Background = background;
-		}
-	}
-
-	sealed class ColorProvider
-	{
-		readonly Dictionary<TextColor, ConsoleColorPair> colors = new Dictionary<TextColor, ConsoleColorPair>();
-
-		public void Add(TextColor color, ConsoleColor? foreground, ConsoleColor? background = null)
-		{
-			if (foreground != null || background != null)
-				colors[color] = new ConsoleColorPair(foreground, background);
-		}
-
-		public ConsoleColorPair? GetColor(TextColor? color)
-		{
-			if (color == null)
-				return null;
-			ConsoleColorPair ccPair;
-			return colors.TryGetValue(color.Value, out ccPair) ? ccPair : (ConsoleColorPair?)null;
-		}
-	}
-
-	sealed class ConsoleColorizerOutput : IDecompilerOutput
-	{
-		readonly ColorProvider colorProvider;
-		readonly TextWriter writer;
-		readonly Indenter indenter;
-		bool addIndent = true;
-		int position;
-
-		public int Length => position;
-		public int NextPosition => position + (addIndent ? indenter.String.Length : 0);
-
-		bool IDecompilerOutput.UsesCustomData => false;
-
-		public ConsoleColorizerOutput(TextWriter writer, ColorProvider colorProvider, Indenter indenter)
-		{
-			if (writer == null)
-				throw new ArgumentNullException(nameof(writer));
-			if (colorProvider == null)
-				throw new ArgumentNullException(nameof(colorProvider));
-			if (indenter == null)
-				throw new ArgumentNullException(nameof(indenter));
-			this.writer = writer;
-			this.colorProvider = colorProvider;
-			this.indenter = indenter;
-		}
-
-		void IDecompilerOutput.AddCustomData<TData>(string id, TData data) { }
-		public void IncreaseIndent() => indenter.IncreaseIndent();
-		public void DecreaseIndent() => indenter.DecreaseIndent();
-
-		public void WriteLine()
-		{
-			var nlArray = newLineArray;
-			writer.Write(nlArray);
-			position += nlArray.Length;
-			addIndent = true;
-		}
-		static readonly char[] newLineArray = Environment.NewLine.ToCharArray();
-
-		void AddIndent()
-		{
-			if (!addIndent)
-				return;
-			addIndent = false;
-			var s = indenter.String;
-			writer.Write(s);
-			position += s.Length;
-		}
-
-		void AddText(string text, object color)
-		{
-			if (addIndent)
-				AddIndent();
-			var colorPair = colorProvider.GetColor(color as TextColor?);
-			if (colorPair != null)
-			{
-				if (colorPair.Value.Foreground != null)
-					Console.ForegroundColor = colorPair.Value.Foreground.Value;
-				if (colorPair.Value.Background != null)
-					Console.BackgroundColor = colorPair.Value.Background.Value;
-				writer.Write(text);
-				Console.ResetColor();
-			}
-			else
-				writer.Write(text);
-
-			position += text.Length;
-		}
-
-		void AddText(string text, int index, int length, object color)
-		{
-			if (index == 0 && length == text.Length)
-				AddText(text, color);
-			else
-				AddText(text.Substring(index, length), color);
-		}
-
-		public void Write(string text, object color) => AddText(text, color);
-		public void Write(string text, int index, int length, object color) => AddText(text, index, length, color);
-		public void Write(string text, object reference, DecompilerReferenceFlags flags, object color) => AddText(text, color);
-		public void Write(string text, int index, int length, object reference, DecompilerReferenceFlags flags, object color) => AddText(text, index, length, color);
-		public override string ToString() => writer.ToString();
-		public void Dispose() => writer.Dispose();
-	}
-
-	public sealed class DnSpyDecompiler : IMSBuildProjectWriterLogger
+	
+	public sealed class DnSpyDecompiler
 	{
 		bool isRecursive = false;
 		bool useGac = true;
@@ -591,21 +486,16 @@ namespace Terraria.ModLoader.Setup
 			{
 				ParseCommandLine(args);
 				if (allLanguages.Length == 0)
-					throw new ErrorException("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
+					throw new Exception("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
 				if (GetLanguage() == null)
-					throw new ErrorException(string.Format("Language {0} does not exist", language));
+					throw new Exception(string.Format("Language {0} does not exist", language));
 				Decompile();
 			}
-			catch (ErrorException ex)
+			catch (Exception ex)
 			{
 				PrintHelp();
 				Console.WriteLine();
 				Console.WriteLine("ERROR: {0}", ex.Message);
-				return 1;
-			}
-			catch (Exception ex)
-			{
-				Dump(ex);
 				return 1;
 			}
 			return errors == 0 ? 0 : 1;
@@ -734,17 +624,6 @@ namespace Terraria.ModLoader.Setup
 			return list;
 		}
 
-		void Dump(Exception ex)
-		{
-			while (ex != null)
-			{
-				Console.WriteLine("ERROR: {0}", ex.GetType());
-				Console.WriteLine("  {0}", ex.Message);
-				Console.WriteLine("  {0}", ex.StackTrace);
-				ex = ex.InnerException;
-			}
-		}
-
 		string GetProgramBaseName() => GetBaseName(Environment.GetCommandLineArgs()[0]);
 
 		string GetBaseName(string name)
@@ -795,7 +674,7 @@ namespace Terraria.ModLoader.Setup
 		void ParseCommandLine(string[] args)
 		{
 			if (args.Length == 0)
-				throw new ErrorException("No options specified");
+				throw new Exception("No options specified");
 
 			bool canParseCommands = true;
 			IDecompiler lang = null;
@@ -833,7 +712,7 @@ namespace Terraria.ModLoader.Setup
 						case "-o":
 						case "--output-dir":
 							if (next == null)
-								throw new ErrorException("Missing output directory");
+								throw new Exception("Missing output directory");
 							outputDir = Path.GetFullPath(next);
 							i++;
 							break;
@@ -841,25 +720,25 @@ namespace Terraria.ModLoader.Setup
 						case "-l":
 						case "--lang":
 							if (next == null)
-								throw new ErrorException("Missing language name");
+								throw new Exception("Missing language name");
 							language = next;
 							i++;
 							if (GetLanguage() == null)
-								throw new ErrorException(string.Format("Language '{0}' doesn't exist", language));
+								throw new Exception(string.Format("Language '{0}' doesn't exist", language));
 							lang = null;
 							langDict = null;
 							break;
 
 						case "--asm-path":
 							if (next == null)
-								throw new ErrorException("Missing assembly search path");
+								throw new Exception("Missing assembly search path");
 							asmPaths.AddRange(next.Split(new char[] { PATHS_SEP }, StringSplitOptions.RemoveEmptyEntries));
 							i++;
 							break;
 
 						case "--user-gac":
 							if (next == null)
-								throw new ErrorException("Missing user GAC path");
+								throw new Exception("Missing user GAC path");
 							userGacPaths.AddRange(next.Split(new char[] { PATHS_SEP }, StringSplitOptions.RemoveEmptyEntries));
 							i++;
 							break;
@@ -878,30 +757,30 @@ namespace Terraria.ModLoader.Setup
 
 						case "--sln-name":
 							if (next == null)
-								throw new ErrorException("Missing .sln name");
+								throw new Exception("Missing .sln name");
 							slnName = next;
 							i++;
 							if (Path.IsPathRooted(slnName))
-								throw new ErrorException(string.Format(".sln name ({0}) must be relative to project directory", slnName));
+								throw new Exception(string.Format(".sln name ({0}) must be relative to project directory", slnName));
 							break;
 
 						case "--threads":
 							if (next == null)
-								throw new ErrorException("Missing number of threads");
+								throw new Exception("Missing number of threads");
 							i++;
 							numThreads = SimpleTypeConverter.ParseInt32(next, int.MinValue, int.MaxValue, out error);
 							if (!string.IsNullOrEmpty(error))
-								throw new ErrorException(error);
+								throw new Exception(error);
 							break;
 
 						case "--vs":
 							if (next == null)
-								throw new ErrorException("Missing Visual Studio version");
+								throw new Exception("Missing Visual Studio version");
 							i++;
 							int vsVer;
 							vsVer = SimpleTypeConverter.ParseInt32(next, int.MinValue, int.MaxValue, out error);
 							if (!string.IsNullOrEmpty(error))
-								throw new ErrorException(error);
+								throw new Exception(error);
 							switch (vsVer)
 							{
 								case 2005: projectVersion = ProjectVersion.VS2005; break;
@@ -910,7 +789,7 @@ namespace Terraria.ModLoader.Setup
 								case 2012: projectVersion = ProjectVersion.VS2012; break;
 								case 2013: projectVersion = ProjectVersion.VS2013; break;
 								case 2015: projectVersion = ProjectVersion.VS2015; break;
-								default: throw new ErrorException(string.Format("Invalid Visual Studio version: {0}", vsVer));
+								default: throw new Exception(string.Format("Invalid Visual Studio version: {0}", vsVer));
 							}
 							break;
 
@@ -932,40 +811,40 @@ namespace Terraria.ModLoader.Setup
 
 						case "--spaces":
 							if (next == null)
-								throw new ErrorException("Missing argument");
+								throw new Exception("Missing argument");
 							const int MIN_SPACES = 0, MAX_SPACES = 100;
 							if (!int.TryParse(next, out spaces) || spaces < MIN_SPACES || spaces > MAX_SPACES)
-								throw new ErrorException(string.Format("Number of spaces must be between {0} and {1}", MIN_SPACES, MAX_SPACES));
+								throw new Exception(string.Format("Number of spaces must be between {0} and {1}", MIN_SPACES, MAX_SPACES));
 							i++;
 							break;
 
 						case "-t":
 						case "--type":
 							if (next == null)
-								throw new ErrorException("Missing full name of type");
+								throw new Exception("Missing full name of type");
 							i++;
 							typeName = next;
 							break;
 
 						case "--md":
 							if (next == null)
-								throw new ErrorException("Missing metadata token");
+								throw new Exception("Missing metadata token");
 							i++;
 							mdToken = SimpleTypeConverter.ParseInt32(next, int.MinValue, int.MaxValue, out error);
 							if (!string.IsNullOrEmpty(error))
-								throw new ErrorException(error);
+								throw new Exception(error);
 							break;
 
 						case "--gac-file":
 							if (next == null)
-								throw new ErrorException("Missing GAC assembly name");
+								throw new Exception("Missing GAC assembly name");
 							i++;
 							gacFiles.Add(next);
 							break;
 
 						case "--project-guid":
 							if (next == null || !Guid.TryParse(next, out projectGuid))
-								throw new ErrorException("Invalid GUID");
+								throw new Exception("Invalid GUID");
 							i++;
 							break;
 
@@ -975,14 +854,14 @@ namespace Terraria.ModLoader.Setup
 							{
 								bool hasArg = tuple.Item1.Type != typeof(bool);
 								if (hasArg && next == null)
-									throw new ErrorException("Missing option argument");
+									throw new Exception("Missing option argument");
 								if (hasArg)
 									i++;
 								tuple.Item2(next);
 								break;
 							}
 
-							throw new ErrorException(string.Format("Invalid option: {0}", arg));
+							throw new Exception(string.Format("Invalid option: {0}", arg));
 					}
 				}
 				else
@@ -995,7 +874,7 @@ namespace Terraria.ModLoader.Setup
 			string error;
 			var v = SimpleTypeConverter.ParseInt32(s, int.MinValue, int.MaxValue, out error);
 			if (!string.IsNullOrEmpty(error))
-				throw new ErrorException(error);
+				throw new Exception(error);
 			return v;
 		}
 
@@ -1056,9 +935,9 @@ namespace Terraria.ModLoader.Setup
 			if (mdToken != 0 || typeName != null)
 			{
 				if (files.Count == 0)
-					throw new ErrorException("Missing .NET filename");
+					throw new Exception("Missing .NET filename");
 				if (files.Count != 1)
-					throw new ErrorException("Only one file can be decompiled when using --md");
+					throw new Exception("Only one file can be decompiled when using --md");
 
 				IMemberDef member;
 				if (typeName != null)
@@ -1068,16 +947,12 @@ namespace Terraria.ModLoader.Setup
 				if (member == null)
 				{
 					if (typeName != null)
-						throw new ErrorException(string.Format("Type {0} couldn't be found", typeName));
-					throw new ErrorException("Invalid metadata token");
+						throw new Exception(string.Format("Type {0} couldn't be found", typeName));
+					throw new Exception("Invalid metadata token");
 				}
 
 				var writer = Console.Out;
-				IDecompilerOutput output;
-				if (colorizeOutput)
-					output = new ConsoleColorizerOutput(writer, CreateColorProvider(), GetIndenter());
-				else
-					output = new TextWriterDecompilerOutput(writer, GetIndenter());
+				IDecompilerOutput output = new TextWriterDecompilerOutput(writer, GetIndenter());
 
 				var lang = GetLanguage();
 				if (member is MethodDef)
@@ -1091,17 +966,16 @@ namespace Terraria.ModLoader.Setup
 				else if (member is TypeDef)
 					lang.Decompile((TypeDef)member, output, decompilationContext);
 				else
-					throw new ErrorException("Only types, methods, fields, events and properties can be decompiled");
+					throw new Exception("Only types, methods, fields, events and properties can be decompiled");
 			}
 			else
 			{
 				if (string.IsNullOrEmpty(outputDir))
-					throw new ErrorException("Missing output directory");
+					throw new Exception("Missing output directory");
 				if (GetLanguage().ProjectFileExtension == null)
-					throw new ErrorException(string.Format("Language {0} doesn't support creating project files", GetLanguage().UniqueNameUI));
+					throw new Exception(string.Format("Language {0} doesn't support creating project files", GetLanguage().UniqueNameUI));
 
 				var options = new ProjectCreatorOptions(outputDir, decompilationContext.CancellationToken);
-				options.Logger = this;
 				options.ProjectVersion = projectVersion;
 				options.NumberOfThreads = numThreads;
 				options.ProjectModules.AddRange(files);
@@ -1201,7 +1075,7 @@ namespace Terraria.ModLoader.Setup
 							yield return info;
 					}
 					else
-						throw new ErrorException(string.Format("File/directory '{0}' doesn't exist", file));
+						throw new Exception(string.Format("File/directory '{0}' doesn't exist", file));
 				}
 			}
 
@@ -1213,7 +1087,7 @@ namespace Terraria.ModLoader.Setup
 			{
 				var asm = assemblyResolver.Resolve(new AssemblyNameInfo(asmName), null);
 				if (asm == null)
-					throw new ErrorException(string.Format("Couldn't resolve GAC assembly '{0}'", asmName));
+					throw new Exception(string.Format("Couldn't resolve GAC assembly '{0}'", asmName));
 				yield return CreateProjectModuleOptions(asm.ManifestModule);
 			}
 			assemblyResolver.FindExactMatch = oldFindExactMatch;
@@ -1384,68 +1258,8 @@ namespace Terraria.ModLoader.Setup
 
 		IDecompiler[] AllLanguages => allLanguages;
 		readonly IDecompiler[] allLanguages;
+		
 
-		public void Error(string message)
-		{
-			errors++;
-			Console.Error.WriteLine(string.Format("ERROR: {0}", message));
-		}
 		int errors;
-
-		ColorProvider CreateColorProvider()
-		{
-			var provider = new ColorProvider();
-			provider.Add(TextColor.Operator, null, null);
-			provider.Add(TextColor.Punctuation, null, null);
-			provider.Add(TextColor.Number, null, null);
-			provider.Add(TextColor.Comment, ConsoleColor.Green, null);
-			provider.Add(TextColor.Keyword, ConsoleColor.Cyan, null);
-			provider.Add(TextColor.String, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.VerbatimString, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.Char, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.Namespace, ConsoleColor.Yellow, null);
-			provider.Add(TextColor.Type, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.SealedType, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.StaticType, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.Delegate, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.Enum, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.Interface, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.ValueType, ConsoleColor.Green, null);
-			provider.Add(TextColor.Module, ConsoleColor.DarkMagenta, null);
-			provider.Add(TextColor.TypeGenericParameter, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.MethodGenericParameter, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.InstanceMethod, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.StaticMethod, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.ExtensionMethod, ConsoleColor.DarkYellow, null);
-			provider.Add(TextColor.InstanceField, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.EnumField, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.LiteralField, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.StaticField, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.InstanceEvent, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.StaticEvent, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.InstanceProperty, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.StaticProperty, ConsoleColor.Magenta, null);
-			provider.Add(TextColor.Local, ConsoleColor.White, null);
-			provider.Add(TextColor.Parameter, ConsoleColor.White, null);
-			provider.Add(TextColor.PreprocessorKeyword, ConsoleColor.Blue, null);
-			provider.Add(TextColor.PreprocessorText, null, null);
-			provider.Add(TextColor.Label, ConsoleColor.DarkRed, null);
-			provider.Add(TextColor.OpCode, ConsoleColor.Cyan, null);
-			provider.Add(TextColor.ILDirective, ConsoleColor.Cyan, null);
-			provider.Add(TextColor.ILModule, ConsoleColor.DarkMagenta, null);
-			provider.Add(TextColor.ExcludedCode, null, null);
-			provider.Add(TextColor.XmlDocCommentAttributeName, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentAttributeQuotes, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentAttributeValue, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentCDataSection, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentComment, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentDelimiter, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentEntityReference, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentName, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentProcessingInstruction, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.XmlDocCommentText, ConsoleColor.DarkGreen, null);
-			provider.Add(TextColor.Error, ConsoleColor.Red, null);
-			return provider;
-		}
 	}
 }
