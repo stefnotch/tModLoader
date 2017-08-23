@@ -35,12 +35,32 @@ namespace Terraria.ModLoader.Setup
 			//throw new NotImplementedException("serverOnly");
 		}
 
+		public override bool ConfigurationDialog()
+		{
+			if (File.Exists(TerrariaPath) && File.Exists(TerrariaServerPath))
+				return true;
+
+			return (bool)taskInterface.Invoke(new Func<bool>(SelectTerrariaDialog));
+		}
+
+		public override bool StartupWarning()
+		{
+			return MessageBox.Show(
+					"Decompilation may take a long time (1-3 hours) and consume a lot of RAM (2GB will not be enough)",
+					"Ready to Decompile", MessageBoxButtons.OKCancel, MessageBoxIcon.Information)
+				== DialogResult.OK;
+		}
 
 		public override void Run()
 		{
+			taskInterface.SetStatus("Deleting Old Src");
+
+			if (Directory.Exists(_srcDir)) Directory.Delete(_srcDir, true);
+
+			taskInterface.SetStatus("Decompiling");
 			//TODO: Remove args
 			string[] args = { };
-			new DnSpyDecompiler(new List<string> { TerrariaPath }, _srcDir)
+			new DnSpyDecompiler(taskInterface, new List <string> { TerrariaPath }, _srcDir)
 			{
 				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
 			}.Run(args);
@@ -49,7 +69,24 @@ namespace Terraria.ModLoader.Setup
 
 
 
+	/*
+	Copyright (C) 2014-2016 de4dot@gmail.com
 
+	This file is part of dnSpy
+
+	dnSpy is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	dnSpy is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
+*/
 	public sealed class DnSpyDecompiler
 	{
 		string language = DecompilerConstants.LANGUAGE_CSHARP.ToString();
@@ -62,10 +99,8 @@ namespace Terraria.ModLoader.Setup
 
 		int spaces = 4;
 
-
 		const bool useGac = true;
-
-
+	
 		readonly DecompilationContext decompilationContext;
 		readonly ModuleContext moduleContext;
 		readonly AssemblyResolver assemblyResolver;
@@ -75,6 +110,7 @@ namespace Terraria.ModLoader.Setup
 		static readonly char PATHS_SEP = Path.PathSeparator;
 
 
+		private ITaskInterface _taskInterface;
 		//Unchecked:
 
 
@@ -97,17 +133,18 @@ namespace Terraria.ModLoader.Setup
 
 
 
-		public DnSpyDecompiler(List<string> filesToDecompile, string outputDirectory)
+		public DnSpyDecompiler(ITaskInterface taskInterface, List<string> filesToDecompile, string outputDirectory)
 		{
 			files = filesToDecompile;
 			outputDir = outputDirectory;
-
+			_taskInterface = taskInterface;
 
 
 			asmPaths = new List<string>();
 			userGacPaths = new List<string>();
 			gacFiles = new List<string>();
 			decompilationContext = new DecompilationContext();
+			decompilationContext.CancellationToken = taskInterface.CancellationToken();
 			moduleContext = ModuleDef.CreateModuleContext(false); // Same as dnSpy.exe
 			assemblyResolver = (AssemblyResolver)moduleContext.AssemblyResolver;
 			assemblyResolver.EnableFrameworkRedirect = false; // Same as dnSpy.exe
@@ -177,15 +214,7 @@ namespace Terraria.ModLoader.Setup
 		{
 			try
 			{
-				//Messing around with some internal stuff...
-				const string NO_TOKENS_COMMENT = "--no-tokens";
-				IDecompiler lang = GetLanguage();
-				Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = CreateDecompilerOptionsDictionary(lang);
-
-				if(langDict.ContainsKey(NO_TOKENS_COMMENT))
-				{
-					langDict[NO_TOKENS_COMMENT].Item1.Value=false;
-				}
+				RemoveTokenComments();
 
 
 				ParseCommandLine(args);
@@ -202,7 +231,22 @@ namespace Terraria.ModLoader.Setup
 				Console.WriteLine("ERROR: {0}", ex.Message);
 				return 1;
 			}
-			return errors == 0 ? 0 : 1;
+			return 0;
+		}
+
+		/// <summary>
+		/// Removes some useless comments in the output
+		/// </summary>
+		void RemoveTokenComments()
+		{
+			const string NO_TOKENS_COMMENT = "--no-tokens";
+			IDecompiler lang = GetLanguage();
+			Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = CreateDecompilerOptionsDictionary(lang);
+
+			if (langDict.ContainsKey(NO_TOKENS_COMMENT))
+			{
+				langDict[NO_TOKENS_COMMENT].Item1.Value = false;
+			}
 		}
 
 		void PrintHelp()
@@ -354,7 +398,6 @@ namespace Terraria.ModLoader.Setup
 
 				if (canParseCommands && arg[0] == '-')
 				{
-					string error;
 					switch (arg)
 					{
 						case "--":
@@ -426,7 +469,7 @@ namespace Terraria.ModLoader.Setup
 					}
 				}
 				else
-					files.Add(arg);
+					throw new Exception("Unknow arg " + arg);
 			}
 		}
 
@@ -504,6 +547,7 @@ namespace Terraria.ModLoader.Setup
 			options.ProjectModules.AddRange(files);
 			options.UserGACPaths.AddRange(userGacPaths);
 			options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
+			options.ProgressListener = new ProgressListener(_taskInterface);
 			if (!string.IsNullOrEmpty(slnName))
 				options.SolutionFilename = slnName;
 			var creator = new MSBuildProjectCreator(options);
@@ -516,62 +560,6 @@ namespace Terraria.ModLoader.Setup
 			if (spaces <= 0)
 				return new Indenter(4, 4, true);
 			return new Indenter(spaces, spaces, false);
-		}
-
-		static TypeDef FindType(ModuleDef module, string name)
-		{
-			return FindTypeFullName(module, name, StringComparer.Ordinal) ??
-				FindTypeFullName(module, name, StringComparer.OrdinalIgnoreCase) ??
-				FindTypeName(module, name, StringComparer.Ordinal) ??
-				FindTypeName(module, name, StringComparer.OrdinalIgnoreCase);
-		}
-
-		static TypeDef FindTypeFullName(ModuleDef module, string name, StringComparer comparer)
-		{
-			var sb = new StringBuilder();
-			return module.GetTypes().FirstOrDefault(a =>
-			{
-				sb.Clear();
-				string s1, s2;
-				if (comparer.Equals(s1 = FullNameCreator.FullName(a, false, null, sb), name))
-					return true;
-				sb.Clear();
-				if (comparer.Equals(s2 = FullNameCreator.FullName(a, true, null, sb), name))
-					return true;
-				sb.Clear();
-				if (comparer.Equals(CleanTypeName(s1), name))
-					return true;
-				sb.Clear();
-				return comparer.Equals(CleanTypeName(s2), name);
-			});
-		}
-
-		static TypeDef FindTypeName(ModuleDef module, string name, StringComparer comparer)
-		{
-			var sb = new StringBuilder();
-			return module.GetTypes().FirstOrDefault(a =>
-			{
-				sb.Clear();
-				string s1, s2;
-				if (comparer.Equals(s1 = FullNameCreator.Name(a, false, sb), name))
-					return true;
-				sb.Clear();
-				if (comparer.Equals(s2 = FullNameCreator.Name(a, true, sb), name))
-					return true;
-				sb.Clear();
-				if (comparer.Equals(CleanTypeName(s1), name))
-					return true;
-				sb.Clear();
-				return comparer.Equals(CleanTypeName(s2), name);
-			});
-		}
-
-		static string CleanTypeName(string s)
-		{
-			int i = s.LastIndexOf('`');
-			if (i < 0)
-				return s;
-			return s.Substring(0, i);
 		}
 
 		IEnumerable<ProjectModuleOptions> GetDotNetFiles()
@@ -798,8 +786,43 @@ namespace Terraria.ModLoader.Setup
 		}
 
 		readonly IDecompiler[] allLanguages;
+	}
 
+	class ProgressListener : IMSBuildProgressListener
+	{
+		private ITaskInterface _taskInterface;
+		public ProgressListener(ITaskInterface taskInterface)
+		{
+			_taskInterface = taskInterface;
+		}
+		public void SetMaxProgress(int maxProgress)
+		{
+			_taskInterface.SetMaxProgress(maxProgress);
+		}
+		public void SetProgress(int progress)
+		{
+			bool start;
+			lock (newProgressLock)
+			{
+				start = newProgress == null;
+				if (newProgress == null || progress > newProgress.Value)
+					newProgress = progress;
+			}
+			if (start)
+			{
+				int? newValue;
+				lock (newProgressLock)
+				{
+					newValue = newProgress;
+					newProgress = null;
+				}
+				Debug.Assert(newValue != null);
+				if (newValue != null)
+					_taskInterface.SetProgress(newValue.Value);
+			}
+		}
+		readonly object newProgressLock = new object();
+		int? newProgress;
 
-		int errors;
 	}
 }
