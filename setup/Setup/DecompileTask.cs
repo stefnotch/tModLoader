@@ -106,9 +106,11 @@ namespace Terraria.ModLoader.Setup
 
 		int numThreads = 0; //Default value --> 1 thread per core
 
-		int spaces = 4;
+		const int spaces = 4;
 
 		const bool useGac = true;
+		const bool unpackResources = true;
+		const bool createResX = true;
 
 		readonly DecompilationContext decompilationContext;
 		readonly ModuleContext moduleContext;
@@ -120,25 +122,13 @@ namespace Terraria.ModLoader.Setup
 
 
 		private ITaskInterface _taskInterface;
+
+		
 		//Unchecked:
 
-		//TODO: Use this???
-		bool isRecursive = false;
-		
-		bool unpackResources = true;
-		bool createResX = true;
+
 		bool decompileBaml = true;
 		Guid projectGuid = Guid.NewGuid();
-
-
-
-
-		readonly List<string> asmPaths;
-		readonly List<string> userGacPaths;
-		readonly List<string> gacFiles;
-
-
-
 
 
 		public DnSpyDecompiler(ITaskInterface taskInterface, List<string> filesToDecompile, string outputDirectory)
@@ -146,11 +136,7 @@ namespace Terraria.ModLoader.Setup
 			files = filesToDecompile;
 			outputDir = outputDirectory;
 			_taskInterface = taskInterface;
-
-
-			asmPaths = new List<string>();
-			userGacPaths = new List<string>();
-			gacFiles = new List<string>();
+			
 			decompilationContext = new DecompilationContext();
 			decompilationContext.CancellationToken = taskInterface.CancellationToken();
 			moduleContext = ModuleDef.CreateModuleContext(false); // Same as dnSpy.exe
@@ -318,10 +304,6 @@ namespace Terraria.ModLoader.Setup
 
 		void Decompile()
 		{
-			foreach (var dir in asmPaths)
-				AddSearchPath(dir);
-			foreach (var dir in userGacPaths)
-				AddSearchPath(dir);
 			assemblyResolver.UseGAC = useGac;
 
 			var files = new List<ProjectModuleOptions>(GetDotNetFiles());
@@ -340,7 +322,6 @@ namespace Terraria.ModLoader.Setup
 			options.ProjectVersion = projectVersion;
 			options.NumberOfThreads = numThreads;
 			options.ProjectModules.AddRange(files);
-			options.UserGACPaths.AddRange(userGacPaths);
 			options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
 			options.ProgressListener = new ProgressListener(_taskInterface);
 			if (!string.IsNullOrEmpty(slnName))
@@ -386,19 +367,6 @@ namespace Terraria.ModLoader.Setup
 						throw new Exception(string.Format("File/directory '{0}' doesn't exist", file));
 				}
 			}
-
-			// Don't use exact matching here so the user can tell us to load eg. "mscorlib, Version=4.0.0.0" which
-			// is easier to type than the full assembly name
-			var oldFindExactMatch = assemblyResolver.FindExactMatch;
-			assemblyResolver.FindExactMatch = false;
-			foreach (var asmName in gacFiles)
-			{
-				var asm = assemblyResolver.Resolve(new AssemblyNameInfo(asmName), null);
-				if (asm == null)
-					throw new Exception(string.Format("Couldn't resolve GAC assembly '{0}'", asmName));
-				yield return CreateProjectModuleOptions(asm.ManifestModule);
-			}
-			assemblyResolver.FindExactMatch = oldFindExactMatch;
 		}
 
 		IEnumerable<ProjectModuleOptions> DumpDir(string path, string pattern)
@@ -411,56 +379,9 @@ namespace Terraria.ModLoader.Setup
 				path = stack.Pop();
 				foreach (var info in DumpDir2(path, pattern))
 					yield return info;
-				if (isRecursive)
-				{
-					foreach (var di in GetDirs(path))
-						stack.Push(di.FullName);
-				}
 			}
 		}
-
-		IEnumerable<DirectoryInfo> GetDirs(string path)
-		{
-			IEnumerable<FileSystemInfo> fsysIter = null;
-			try
-			{
-				fsysIter = new DirectoryInfo(path).EnumerateFileSystemInfos("*", SearchOption.TopDirectoryOnly);
-			}
-			catch (IOException)
-			{
-			}
-			catch (UnauthorizedAccessException)
-			{
-			}
-			catch (SecurityException)
-			{
-			}
-			if (fsysIter == null)
-				yield break;
-
-			foreach (var info in fsysIter)
-			{
-				if ((info.Attributes & System.IO.FileAttributes.Directory) == 0)
-					continue;
-				DirectoryInfo di = null;
-				try
-				{
-					di = new DirectoryInfo(info.FullName);
-				}
-				catch (IOException)
-				{
-				}
-				catch (UnauthorizedAccessException)
-				{
-				}
-				catch (SecurityException)
-				{
-				}
-				if (di != null)
-					yield return di;
-			}
-		}
-
+		
 		IEnumerable<ProjectModuleOptions> DumpDir2(string path, string pattern)
 		{
 			pattern = pattern ?? "*";
