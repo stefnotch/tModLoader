@@ -122,11 +122,6 @@ namespace Terraria.ModLoader.Setup
 
 
 		private ITaskInterface _taskInterface;
-
-		
-		//Unchecked:
-
-
 		bool decompileBaml = true;
 		Guid projectGuid = Guid.NewGuid();
 
@@ -204,7 +199,7 @@ namespace Terraria.ModLoader.Setup
 			return type == null ? default(T) : (T)Activator.CreateInstance(type);
 		}
 
-		public int Run()
+		public void Run()
 		{
 			try
 			{
@@ -220,9 +215,7 @@ namespace Terraria.ModLoader.Setup
 			{
 				Console.WriteLine();
 				Console.WriteLine("ERROR: {0}", ex.Message);
-				return 1;
 			}
-			return 0;
 		}
 
 		/// <summary>
@@ -230,68 +223,15 @@ namespace Terraria.ModLoader.Setup
 		/// </summary>
 		void RemoveTokenComments()
 		{
-			const string NO_TOKENS_COMMENT = "--no-tokens";
-			IDecompiler lang = GetLanguage();
-			Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = CreateDecompilerOptionsDictionary(lang);
 
-			if (langDict.ContainsKey(NO_TOKENS_COMMENT))
+			const string TOKENS_OPTION = "tokens";
+			var tokenComments = GetLanguage().Settings.TryGetOption("tokens");
+			if(tokenComments != null)
 			{
-				langDict[NO_TOKENS_COMMENT].Item1.Value = false;
+				tokenComments.Value = false;
 			}
 		}
 		
-		string GetOptionName(IDecompilerOption opt, string extraPrefix = null)
-		{
-			var prefix = "--" + extraPrefix;
-			var o = prefix + FixInvalidSwitchChars((opt.Name != null ? opt.Name : opt.Guid.ToString()));
-			return o;
-		}
-
-		static string FixInvalidSwitchChars(string s) => s.Replace(' ', '-');
-		
-
-		const string BOOLEAN_NO_PREFIX = "no-";
-		const string BOOLEAN_DONT_PREFIX = "dont-";
-
-
-		static int ParseInt32(string s)
-		{
-			string error;
-			var v = SimpleTypeConverter.ParseInt32(s, int.MinValue, int.MaxValue, out error);
-			if (!string.IsNullOrEmpty(error))
-				throw new Exception(error);
-			return v;
-		}
-
-		static string ParseString(string s) => s;
-
-		Dictionary<string, Tuple<IDecompilerOption, Action<string>>> CreateDecompilerOptionsDictionary(IDecompiler decompiler)
-		{
-			var dict = new Dictionary<string, Tuple<IDecompilerOption, Action<string>>>();
-
-			if (decompiler == null)
-				return dict;
-
-			foreach (var tmp in decompiler.Settings.Options)
-			{
-				var opt = tmp;
-				if (opt.Type == typeof(bool))
-				{
-					dict[GetOptionName(opt)] = Tuple.Create(opt, new Action<string>(a => opt.Value = true));
-					dict[GetOptionName(opt, BOOLEAN_NO_PREFIX)] = Tuple.Create(opt, new Action<string>(a => opt.Value = false));
-					dict[GetOptionName(opt, BOOLEAN_DONT_PREFIX)] = Tuple.Create(opt, new Action<string>(a => opt.Value = false));
-				}
-				else if (opt.Type == typeof(int))
-					dict[GetOptionName(opt)] = Tuple.Create(opt, new Action<string>(a => opt.Value = ParseInt32(a)));
-				else if (opt.Type == typeof(string))
-					dict[GetOptionName(opt)] = Tuple.Create(opt, new Action<string>(a => opt.Value = ParseString(a)));
-				else
-					Debug.Fail($"Unsupported type: {opt.Type}");
-			}
-
-			return dict;
-		}
-
 		void AddSearchPath(string dir)
 		{
 			if (Directory.Exists(dir) && !addedPaths.Contains(dir))
