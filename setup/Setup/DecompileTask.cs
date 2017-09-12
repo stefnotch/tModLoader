@@ -58,12 +58,21 @@ namespace Terraria.ModLoader.Setup
 			if (Directory.Exists(_srcDir)) Directory.Delete(_srcDir, true);
 
 			taskInterface.SetStatus("Decompiling");
-			//TODO: Remove args
-			string[] args = { };
-			new DnSpyDecompiler(taskInterface, new List <string> { TerrariaPath }, _srcDir)
+
+
+			var filesToDecompile = new List<string> { TerrariaServerPath };
+
+			//TODO: Make this better
+			if (!_serverOnly)
+			{
+				filesToDecompile.Add(TerrariaPath);
+			}
+			
+			new DnSpyDecompiler(taskInterface, filesToDecompile, _srcDir)
 			{
 				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
-			}.Run(args);
+			}.Run();
+
 		}
 	}
 
@@ -100,7 +109,7 @@ namespace Terraria.ModLoader.Setup
 		int spaces = 4;
 
 		const bool useGac = true;
-	
+
 		readonly DecompilationContext decompilationContext;
 		readonly ModuleContext moduleContext;
 		readonly AssemblyResolver assemblyResolver;
@@ -113,10 +122,9 @@ namespace Terraria.ModLoader.Setup
 		private ITaskInterface _taskInterface;
 		//Unchecked:
 
-
+		//TODO: Use this???
 		bool isRecursive = false;
-
-		bool addCorlibRef = true;
+		
 		bool unpackResources = true;
 		bool createResX = true;
 		bool decompileBaml = true;
@@ -210,14 +218,12 @@ namespace Terraria.ModLoader.Setup
 			return type == null ? default(T) : (T)Activator.CreateInstance(type);
 		}
 
-		public int Run(string[] args)
+		public int Run()
 		{
 			try
 			{
 				RemoveTokenComments();
-
-
-				ParseCommandLine(args);
+				
 				if (allLanguages.Length == 0)
 					throw new Exception("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
 				if (GetLanguage() == null)
@@ -226,7 +232,6 @@ namespace Terraria.ModLoader.Setup
 			}
 			catch (Exception ex)
 			{
-				PrintHelp();
 				Console.WriteLine();
 				Console.WriteLine("ERROR: {0}", ex.Message);
 				return 1;
@@ -248,94 +253,7 @@ namespace Terraria.ModLoader.Setup
 				langDict[NO_TOKENS_COMMENT].Item1.Value = false;
 			}
 		}
-
-		void PrintHelp()
-		{
-			var progName = GetProgramBaseName();
-			Console.WriteLine(progName + " " + "[options] [fileOrDir1] [fileOrDir2] [...]", progName);
-			Console.WriteLine();
-			foreach (var info in usageInfos)
-			{
-				var arg = info.Option;
-				if (info.OptionArgument != null)
-					arg = arg + " " + info.OptionArgument;
-				Console.WriteLine("  {0,-12}   {1}", arg, string.Format(info.Description, PATHS_SEP));
-			}
-			Console.WriteLine();
-			Console.WriteLine("Languages:");
-			foreach (var lang in AllLanguages)
-				Console.WriteLine("  {0} ({1})", lang.UniqueNameUI, lang.UniqueGuid.ToString("B"));
-
-			var langLists = GetLanguageOptions().Where(a => a[0].Settings.Options.Any()).ToArray();
-			if (langLists.Length > 0)
-			{
-				Console.WriteLine();
-				Console.WriteLine("Language options:");
-				Console.WriteLine("All boolean options can be disabled by using 'no-' or 'dont-', eg. --dont-sort-members");
-				foreach (var langList in langLists)
-				{
-					Console.WriteLine();
-					foreach (var lang in langList)
-						Console.WriteLine("  {0} ({1})", lang.UniqueNameUI, lang.UniqueGuid.ToString("B"));
-					foreach (var opt in langList[0].Settings.Options)
-						Console.WriteLine("    {0}\t({1} = {2}) {3}", GetOptionName(opt), opt.Type.Name, opt.Value, opt.Description);
-				}
-			}
-			Console.WriteLine();
-			Console.WriteLine("Examples:");
-			foreach (var info in helpInfos)
-			{
-				Console.WriteLine("  " + progName + " " + info.CommandLine);
-				Console.WriteLine("      " + info.Description);
-			}
-		}
-
-		struct UsageInfo
-		{
-			public string Option { get; }
-			public string OptionArgument { get; }
-			public string Description { get; }
-			public UsageInfo(string option, string optionArgument, string description)
-			{
-				Option = option;
-				OptionArgument = optionArgument;
-				Description = description;
-			}
-		}
-		static readonly UsageInfo[] usageInfos = new UsageInfo[] {
-			new UsageInfo("--asm-path", "path", "assembly search path. Paths can be separated with '{0}' or you can use multiple --asm-path's"),
-			new UsageInfo("--user-gac", "path", "user GAC path. Paths can be separated with '{0}' or you can use multiple --user-gac's"),
-			new UsageInfo("--no-gac", null, "don't use the GAC to look up assemblies. Useful with --no-stdlib"),
-			new UsageInfo("--no-stdlib", null, "projects don't reference mscorlib"),
-			new UsageInfo("--no-resources", null, "don't unpack resources"),
-			new UsageInfo("--no-resx", null, "don't create .resx files"),
-			new UsageInfo("--no-baml", null, "don't decompile baml to xaml"),
-			new UsageInfo("--project-guid", "N", "project guid"),
-			new UsageInfo("-t", "name", "decompile the type with the specified name to stdout. Either Namespace.Name or Name, case insensitive"),
-			new UsageInfo("--type", "name", "same as -t"),
-			new UsageInfo("--gac-file", "assembly", "decompile an assembly from the GAC. Use full assembly name to use an exact version."),
-			new UsageInfo("-r", null, "recursive search for .NET files to decompile"),
-			new UsageInfo("-o", "outdir", "output directory"),
-			new UsageInfo("-l", "lang", "set language, default is C#. Guids can be used."),
-		};
-
-		struct HelpInfo
-		{
-			public string CommandLine { get; }
-			public string Description { get; }
-			public HelpInfo(string description, string commandLine)
-			{
-				CommandLine = commandLine;
-				Description = description;
-			}
-		}
-		static readonly HelpInfo[] helpInfos = new HelpInfo[] {
-			new HelpInfo(@"Decompiles all .NET files in the above directory and saves files to C:\out\path", @"-o C:\out\path C:\some\path"),
-			new HelpInfo(@"Decompiles all .NET files in the above directory and all sub directories", @"-o C:\out\path -r C:\some\path"),
-			new HelpInfo(@"Decompiles all *.dll .NET files in the above directory and saves files to C:\out\path", @"-o C:\out\path C:\some\path\*.dll"),
-			new HelpInfo(@"Decompiles System.Int32 from mscorlib", @"-t system.int32 --gac-file ""mscorlib, Version=4.0.0.0"""),
-		};
-
+		
 		string GetOptionName(IDecompilerOption opt, string extraPrefix = null)
 		{
 			var prefix = "--" + extraPrefix;
@@ -344,134 +262,11 @@ namespace Terraria.ModLoader.Setup
 		}
 
 		static string FixInvalidSwitchChars(string s) => s.Replace(' ', '-');
-
-		List<List<IDecompiler>> GetLanguageOptions()
-		{
-			var list = new List<List<IDecompiler>>();
-			var dict = new Dictionary<object, List<IDecompiler>>();
-			foreach (var lang in AllLanguages)
-			{
-				List<IDecompiler> opts;
-				if (!dict.TryGetValue(lang.Settings, out opts))
-				{
-					dict.Add(lang.Settings, opts = new List<IDecompiler>());
-					list.Add(opts);
-				}
-				opts.Add(lang);
-			}
-			return list;
-		}
-
-		string GetProgramBaseName() => GetBaseName(Environment.GetCommandLineArgs()[0]);
-
-		string GetBaseName(string name)
-		{
-			int index = name.LastIndexOf(Path.DirectorySeparatorChar);
-			if (index < 0)
-				return name;
-			return name.Substring(index + 1);
-		}
+		
 
 		const string BOOLEAN_NO_PREFIX = "no-";
 		const string BOOLEAN_DONT_PREFIX = "dont-";
 
-		void ParseCommandLine(string[] args)
-		{
-			bool canParseCommands = true;
-			IDecompiler lang = null;
-			Dictionary<string, Tuple<IDecompilerOption, Action<string>>> langDict = null;
-			for (int i = 0; i < args.Length; i++)
-			{
-				if (lang == null)
-				{
-					lang = GetLanguage();
-					langDict = CreateDecompilerOptionsDictionary(lang);
-				}
-				var arg = args[i];
-				var next = i + 1 < args.Length ? args[i + 1] : null;
-				if (arg.Length == 0)
-					continue;
-
-				// **********************************************************************
-				// If you add more '--' options here, also update 'string[] ourOptions'
-				// **********************************************************************
-
-				if (canParseCommands && arg[0] == '-')
-				{
-					switch (arg)
-					{
-						case "--":
-							canParseCommands = false;
-							break;
-
-						case "-r":
-						case "--recursive":
-							isRecursive = true;
-							break;
-
-						case "--asm-path":
-							if (next == null)
-								throw new Exception("Missing assembly search path");
-							asmPaths.AddRange(next.Split(new char[] { PATHS_SEP }, StringSplitOptions.RemoveEmptyEntries));
-							i++;
-							break;
-
-						case "--user-gac":
-							if (next == null)
-								throw new Exception("Missing user GAC path");
-							userGacPaths.AddRange(next.Split(new char[] { PATHS_SEP }, StringSplitOptions.RemoveEmptyEntries));
-							i++;
-							break;
-
-						case "--no-stdlib":
-							addCorlibRef = false;
-							break;
-
-						case "--no-resources":
-							unpackResources = false;
-							break;
-
-						case "--no-resx":
-							createResX = false;
-							break;
-
-						case "--no-baml":
-							decompileBaml = false;
-							break;
-
-						case "--gac-file":
-							if (next == null)
-								throw new Exception("Missing GAC assembly name");
-							i++;
-							gacFiles.Add(next);
-							break;
-
-						case "--project-guid":
-							if (next == null || !Guid.TryParse(next, out projectGuid))
-								throw new Exception("Invalid GUID");
-							i++;
-							break;
-
-						default:
-							Tuple<IDecompilerOption, Action<string>> tuple;
-							if (langDict.TryGetValue(arg, out tuple))
-							{
-								bool hasArg = tuple.Item1.Type != typeof(bool);
-								if (hasArg && next == null)
-									throw new Exception("Missing option argument");
-								if (hasArg)
-									i++;
-								tuple.Item2(next);
-								break;
-							}
-
-							throw new Exception(string.Format("Invalid option: {0}", arg));
-					}
-				}
-				else
-					throw new Exception("Unknow arg " + arg);
-			}
-		}
 
 		static int ParseInt32(string s)
 		{
@@ -740,7 +535,7 @@ namespace Terraria.ModLoader.Setup
 			moduleContext.AssemblyResolver.AddToCache(mod);
 			AddSearchPath(Path.GetDirectoryName(mod.Location));
 			var proj = new ProjectModuleOptions(mod, GetLanguage(), decompilationContext);
-			proj.DontReferenceStdLib = !addCorlibRef;
+			proj.DontReferenceStdLib = false;
 			proj.UnpackResources = unpackResources;
 			proj.CreateResX = createResX;
 			proj.DecompileXaml = decompileBaml && bamlDecompiler != null;
