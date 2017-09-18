@@ -182,8 +182,12 @@ namespace Terraria.ModLoader.Setup
 		void Decompile()
 		{
 			assemblyResolver.UseGAC = useGac;
-
+			//files[1].Module.Resources --> Merge!
+			//files[1].Module.resources --> Merge?
+			//files[1].Module.Types
+			//files[1].Module.types
 			var files = new List<ProjectModuleOptions>(GetDotNetFiles());
+			if(Merge == true) RemoveDuplicates(files);
 			string guidStr = projectGuid.ToString();
 			int guidNum = int.Parse(guidStr.Substring(36 - 8, 8), NumberStyles.HexNumber);
 			string guidFormat = guidStr.Substring(0, 36 - 8) + "{0:X8}";
@@ -206,6 +210,43 @@ namespace Terraria.ModLoader.Setup
 			var creator = new MSBuildProjectCreator(options); //TODO: Change the creator
 			creator.Create();
 
+		}
+		/// <summary>
+		/// Removes all duplicate resources and all duplicate types
+		/// </summary>
+		private void RemoveDuplicates(List<ProjectModuleOptions> files)
+		{
+			List<string> resourceCache = new List<string>();
+			List<string> typeCache = new List<string>();
+			foreach (ProjectModuleOptions project in files)
+			{
+				foreach(Resource resource in project.Module.Resources)
+				{
+					if (resourceCache.Contains(resource.Name))
+					{
+						project.Module.Resources.Remove(resource);
+						//TODO: Invalidate the resource
+					}
+					else
+					{
+						resourceCache.Add(resource.Name);
+					}
+				}
+				
+				foreach(TypeDef type in project.Module.Types)
+				{
+					if (typeCache.Contains(type.FullName))
+					{
+						project.Module.Types.Remove(type);
+						//TODO: Invalidate the type
+					}
+					else
+					{
+						typeCache.Add(type.FullName);
+					}
+				}
+				project.Module.ResetTypeDefFindCache();
+			}			
 		}
 
 		Indenter GetIndenter()
@@ -377,6 +418,8 @@ namespace Terraria.ModLoader.Setup
 				numThreads = value;
 			}
 		}
+
+		public bool Merge { get; set; }
 
 		readonly IDecompiler[] allLanguages;
 	}

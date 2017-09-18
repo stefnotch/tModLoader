@@ -70,7 +70,8 @@ namespace Terraria.ModLoader.Setup
 			
 			new DnSpyDecompiler(taskInterface, filesToDecompile, _srcDir)
 			{
-				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
+				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0,
+				Merge = true
 			}.Run();
 
 		}
