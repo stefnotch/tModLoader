@@ -25,14 +25,12 @@ namespace Terraria.ModLoader.Setup
 {
 	public class DecompileTask : Task
 	{
-		private readonly string _srcDir;
+		private readonly string _outputDir;
 		private readonly bool _serverOnly;
-		public DecompileTask(ITaskInterface taskInterface, string srcDir, bool serverOnly = false) : base(taskInterface)
+		public DecompileTask(ITaskInterface taskInterface, string outputDir, bool serverOnly = false) : base(taskInterface)
 		{
-			_srcDir = Path.Combine(baseDir, srcDir);
+			_outputDir = Path.Combine(baseDir, outputDir);
 			_serverOnly = serverOnly;
-			//TODO: ServerOnly doesn't do anything
-			//throw new NotImplementedException("serverOnly");
 		}
 
 		public override bool ConfigurationDialog()
@@ -53,13 +51,6 @@ namespace Terraria.ModLoader.Setup
 
 		public override void Run()
 		{
-			taskInterface.SetStatus("Deleting Old Src");
-
-			if (Directory.Exists(_srcDir)) Directory.Delete(_srcDir, true);
-
-			taskInterface.SetStatus("Decompiling");
-
-
 			var filesToDecompile = new List<string> { TerrariaServerPath };
 
 			//TODO: Make this better
@@ -68,50 +59,176 @@ namespace Terraria.ModLoader.Setup
 				filesToDecompile.Add(TerrariaPath);
 			}
 			
-			new DnSpyDecompiler(taskInterface, filesToDecompile, _srcDir)
+			ProjectCreatorOptions options = new ProjectOptionsCreator(taskInterface, filesToDecompile, _outputDir)
 			{
 				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0,
 				Merge = true
 			}.Run();
 
-		}
-	}
+			
+			TaskInterface.SetStatus("Deleting Old Src");
+			if (Directory.Exists(_options.Directory)) Directory.Delete(_options.Directory, true);
 
-	class ProgressListener : IMSBuildProgressListener
-	{
-		private ITaskInterface _taskInterface;
-		public ProgressListener(ITaskInterface taskInterface)
-		{
-			_taskInterface = taskInterface;
-		}
-		public void SetMaxProgress(int maxProgress)
-		{
-			_taskInterface.SetMaxProgress(maxProgress);
-		}
-		public void SetProgress(int progress)
-		{
-			bool start;
-			lock (newProgressLock)
+			TaskInterface.SetStatus("Decompiling");
+
+
+			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
-				start = newProgress == null;
-				if (newProgress == null || progress > newProgress.Value)
-					newProgress = progress;
+
 			}
-			if (start)
+
+			var items = new List<WorkItem>();
+
+			var serverModule = ReadModule(TerrariaServerPath, serverVersion);
+			var serverSources = GetCodeFiles(serverModule, options).ToList();
+			var serverResources = GetResourceFiles(serverModule, options).ToList();
+
+			var sources = serverSources;
+			var resources = serverResources;
+			var infoModule = serverModule;
+			if (!serverOnly)
 			{
-				int? newValue;
-				lock (newProgressLock)
+				var clientModule = !serverOnly ? ReadModule(TerrariaPath, clientVersion) : null;
+				var clientSources = GetCodeFiles(clientModule, options).ToList();
+				var clientResources = GetResourceFiles(clientModule, options).ToList();
+
+				sources = CombineFiles(clientSources, sources, src => src.Key);
+				resources = CombineFiles(clientResources, resources, res => res.Item1);
+				infoModule = clientModule;
+
+				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension,
+					() => WriteProjectFile(clientModule, clientGuid, clientSources, clientResources, options)));
+
+				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension + ".user",
+					() => WriteProjectUserFile(clientModule, SteamDir, options)));
+			}
+
+			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension,
+				() => WriteProjectFile(serverModule, serverGuid, serverSources, serverResources, options)));
+
+			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension + ".user",
+				() => WriteProjectUserFile(serverModule, SteamDir, options)));
+
+			items.Add(new WorkItem("Writing Assembly Info",
+				() => WriteAssemblyInfo(infoModule, options)));
+
+			items.AddRange(sources.Select(src => new WorkItem(
+				"Decompiling: " + src.Key, () => DecompileSourceFile(src, options))));
+
+			items.AddRange(resources.Select(res => new WorkItem(
+				"Extracting: " + res.Item1, () => ExtractResource(res, options))));
+
+			ExecuteParallel(items, maxDegree: Settings.Default.SingleDecompileThread ? 1 : 0);
+		}
+
+		/////////////////////
+		//    COPYRIGHT    //
+		/////////////////////
+
+		readonly ProjectCreatorOptions options;
+		readonly List<Project> projects = new List<Project>();
+		readonly IMSBuildProgressListener progressListener;
+		int totalProgress;
+
+		public string SolutionFilename => Path.Combine(options.Directory, options.SolutionFilename);
+
+		public void Create()
+		{
+			SatelliteAssemblyFinder satelliteAssemblyFinder = null;
+
+			var opts = new ParallelOptions
+			{
+				CancellationToken = options.CancellationToken,
+				MaxDegreeOfParallelism = options.NumberOfThreads <= 0 ? Environment.ProcessorCount : options.NumberOfThreads,
+			};
+			var filenameCreator = new FilenameCreator(options.Directory);
+			var ctx = new DecompileContext(options.CancellationToken, logger);
+			satelliteAssemblyFinder = new SatelliteAssemblyFinder();
+			Parallel.ForEach(options.ProjectModules, opts, modOpts => {
+				options.CancellationToken.ThrowIfCancellationRequested();
+				string name;
+				lock (filenameCreator)
+					name = filenameCreator.Create(modOpts.Module);
+				var p = new Project(modOpts, name, satelliteAssemblyFinder, options.CreateDecompilerOutput);
+				lock (projects)
+					projects.Add(p);
+				p.CreateProjectFiles(ctx);
+			});
+
+			var jobs = GetJobs().ToArray();
+			bool writeSolutionFile = !string.IsNullOrEmpty(options.SolutionFilename);
+			int maxProgress = jobs.Length + projects.Count;
+			if (writeSolutionFile)
+				maxProgress++;
+			progressListener.SetMaxProgress(maxProgress);
+
+			Parallel.ForEach(GetJobs(), opts, job => {
+				options.CancellationToken.ThrowIfCancellationRequested();
+				try
 				{
-					newValue = newProgress;
-					newProgress = null;
+					job.Create(ctx);
 				}
-				Debug.Assert(newValue != null);
-				if (newValue != null)
-					_taskInterface.SetProgress(newValue.Value);
+				catch (OperationCanceledException)
+				{
+					throw;
+				}
+				catch (Exception ex)
+				{
+					var fjob = job as IFileJob;
+					throw new Exception($"{fjob?.Filename}, {job.Description}", ex);
+				}
+				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
+			});
+			Parallel.ForEach(projects, opts, p => {
+				options.CancellationToken.ThrowIfCancellationRequested();
+				try
+				{
+					var writer = new ProjectWriter(p, p.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths);
+					writer.Write();
+				}
+				catch (OperationCanceledException)
+				{
+					throw;
+				}
+				catch (Exception ex)
+				{
+					throw new Exception($"{p.Filename}", ex);
+				}
+				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
+			});
+			if (writeSolutionFile)
+			{
+				options.CancellationToken.ThrowIfCancellationRequested();
+				try
+				{
+					var writer = new SolutionWriter(options.ProjectVersion, projects, SolutionFilename);
+					writer.Write();
+				}
+				catch (OperationCanceledException)
+				{
+					throw;
+				}
+				catch (Exception ex)
+				{
+					throw new Exception($"{SolutionFilename}", ex);
+				}
+				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
+			}
+			Debug.Assert(totalProgress == maxProgress);
+			progressListener.SetProgress(maxProgress);
+
+		}
+
+		IEnumerable<IJob> GetJobs()
+		{
+			foreach (var p in projects)
+			{
+				foreach (var j in p.GetJobs())
+					yield return j;
 			}
 		}
-		readonly object newProgressLock = new object();
-		int? newProgress;
-
+		/////////////////////
+		//    COPYRIGHT    //
+		/////////////////////
 	}
 }

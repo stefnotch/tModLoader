@@ -33,7 +33,7 @@ namespace Terraria.ModLoader.Setup
 	You should have received a copy of the GNU General Public License
 	along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
-	public sealed class DnSpyDecompiler
+	public sealed class ProjectOptionsCreator
 	{
 		string language = DecompilerConstants.LANGUAGE_CSHARP.ToString();
 
@@ -63,7 +63,7 @@ namespace Terraria.ModLoader.Setup
 		Guid projectGuid = Guid.NewGuid();
 
 
-		public DnSpyDecompiler(ITaskInterface taskInterface, List<string> filesToDecompile, string outputDirectory)
+		public ProjectOptionsCreator(ITaskInterface taskInterface, List<string> filesToDecompile, string outputDirectory)
 		{
 			files = filesToDecompile;
 			outputDir = outputDirectory;
@@ -136,23 +136,15 @@ namespace Terraria.ModLoader.Setup
 			return type == null ? default(T) : (T)Activator.CreateInstance(type);
 		}
 
-		public void Run()
+		public ProjectCreatorOptions Run()
 		{
-			try
-			{
-				RemoveTokenComments();
+			RemoveTokenComments();
 
-				if (allLanguages.Length == 0)
-					throw new Exception("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
-				if (GetLanguage() == null)
-					throw new Exception(string.Format("Language {0} does not exist", language));
-				Decompile();
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine();
-				Console.WriteLine("ERROR: {0}", ex.Message);
-			}
+			if (allLanguages.Length == 0)
+				throw new Exception("No languages were found. Make sure that the language dll files exist in the same folder as this program.");
+			if (GetLanguage() == null)
+				throw new Exception(string.Format("Language {0} does not exist", language));
+			return Decompile();
 		}
 
 		/// <summary>
@@ -160,8 +152,6 @@ namespace Terraria.ModLoader.Setup
 		/// </summary>
 		void RemoveTokenComments()
 		{
-
-			const string TOKENS_OPTION = "tokens";
 			var tokenComments = GetLanguage().Settings.TryGetOption("tokens");
 			if (tokenComments != null)
 			{
@@ -179,7 +169,7 @@ namespace Terraria.ModLoader.Setup
 		}
 		readonly HashSet<string> addedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-		void Decompile()
+		ProjectCreatorOptions Decompile()
 		{
 			assemblyResolver.UseGAC = useGac;
 			//files[1].Module.Resources --> Merge!
@@ -187,7 +177,15 @@ namespace Terraria.ModLoader.Setup
 			//files[1].Module.Types
 			//files[1].Module.types
 			var files = new List<ProjectModuleOptions>(GetDotNetFiles());
-			if(Merge == true) RemoveDuplicates(files);
+			if (Merge == true)
+			{
+				RemoveDuplicates(files);
+
+				if(files.Count > 0) files.ForEach((file) => {
+					file.Module.Name = files[0].Module.Name;
+					file.Module.Assembly.Name = files[0].Module.Assembly.Name;
+				});
+			}
 			string guidStr = projectGuid.ToString();
 			int guidNum = int.Parse(guidStr.Substring(36 - 8, 8), NumberStyles.HexNumber);
 			string guidFormat = guidStr.Substring(0, 36 - 8) + "{0:X8}";
@@ -204,11 +202,11 @@ namespace Terraria.ModLoader.Setup
 			options.NumberOfThreads = numThreads;
 			options.ProjectModules.AddRange(files);
 			options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
-			options.ProgressListener = new ProgressListener(_taskInterface);
 			if (!string.IsNullOrEmpty(slnName))
 				options.SolutionFilename = slnName;
-			var creator = new MSBuildProjectCreator(options); //TODO: Change the creator
-			creator.Create();
+
+
+			return options;
 
 		}
 		/// <summary>
@@ -220,29 +218,29 @@ namespace Terraria.ModLoader.Setup
 			List<string> typeCache = new List<string>();
 			foreach (ProjectModuleOptions project in files)
 			{
-				foreach(Resource resource in project.Module.Resources)
+				for (int i = project.Module.Resources.Count - 1; i >= 0; i--)
 				{
-					if (resourceCache.Contains(resource.Name))
+					if (resourceCache.Contains(project.Module.Resources[i].Name))
 					{
-						project.Module.Resources.Remove(resource);
+						project.Module.Resources.RemoveAt(i);
 						//TODO: Invalidate the resource
 					}
 					else
 					{
-						resourceCache.Add(resource.Name);
+						resourceCache.Add(project.Module.Resources[i].Name);
 					}
 				}
-				
-				foreach(TypeDef type in project.Module.Types)
+
+				for (int i = project.Module.Types.Count - 1; i >= 0; i--)
 				{
-					if (typeCache.Contains(type.FullName))
+					if (typeCache.Contains(project.Module.Types[i].FullName))
 					{
-						project.Module.Types.Remove(type);
+						project.Module.Types.RemoveAt(i);
 						//TODO: Invalidate the type
 					}
 					else
 					{
-						typeCache.Add(type.FullName);
+						typeCache.Add(project.Module.Types[i].FullName);
 					}
 				}
 				project.Module.ResetTypeDefFindCache();

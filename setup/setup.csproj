@@ -116,7 +116,6 @@
     <Compile Include="Setup\MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
-    <Compile Include="Setup\MSBuildProjectCreator.cs" />
     <Compile Include="Setup\PatchTask.cs" />
     <Compile Include="Setup\Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
