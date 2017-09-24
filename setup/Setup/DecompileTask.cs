@@ -51,6 +51,7 @@ namespace Terraria.ModLoader.Setup
 
 		public override void Run()
 		{
+			//TODO: TerrariaServer & Terraria decompilation separate
 			taskInterface.SetStatus("Setting up everything");
 
 			var filesToDecompile = new List<string> { TerrariaServerPath };
@@ -73,9 +74,10 @@ namespace Terraria.ModLoader.Setup
 
 			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
+				int i = 0;
 				foreach (var projectModuleOptions in options.ProjectModules)
 				{
-					Project project = new Project(projectModuleOptions, "Terraria", satelliteAssemblyFinder, options.CreateDecompilerOutput);
+					Project project = new Project(projectModuleOptions, "Terraria" + (++i), satelliteAssemblyFinder, options.CreateDecompilerOutput);
 					projects.Add(project);
 					project.CreateProjectFiles(decompileContext);
 				}
@@ -86,8 +88,6 @@ namespace Terraria.ModLoader.Setup
 			{
 				return new WorkItem("Setting jobs up", () => job.Create(decompileContext));
 			}));
-			ExecuteParallel(jobItems, false, options.NumberOfThreads);
-
 
 			var decompilingItems = new List<WorkItem>();
 			decompilingItems.AddRange(projects.Select((project) =>
@@ -97,6 +97,10 @@ namespace Terraria.ModLoader.Setup
 					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
 				});
 			}));
+
+			taskInterface.SetMaxProgress(jobItems.Count + decompilingItems.Count);
+			progress = 0;
+			ExecuteParallel(jobItems, false, options.NumberOfThreads);
 			ExecuteParallel(decompilingItems, false, options.NumberOfThreads);
 
 			taskInterface.SetStatus("Creating .sln file");
