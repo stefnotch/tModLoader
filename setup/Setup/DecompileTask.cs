@@ -51,184 +51,75 @@ namespace Terraria.ModLoader.Setup
 
 		public override void Run()
 		{
-			var filesToDecompile = new List<string> { TerrariaServerPath };
+			taskInterface.SetStatus("Setting up everything");
 
-			//TODO: Make this better
-			if (!_serverOnly)
-			{
-				filesToDecompile.Add(TerrariaPath);
-			}
-			
+			var filesToDecompile = new List<string> { TerrariaServerPath };
+			if (!_serverOnly) filesToDecompile.Add(TerrariaPath);
+
 			ProjectCreatorOptions options = new ProjectOptionsCreator(taskInterface, filesToDecompile, _outputDir)
 			{
 				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0,
 				Merge = true
 			}.Run();
 
-			
-			TaskInterface.SetStatus("Deleting Old Src");
-			if (Directory.Exists(_options.Directory)) Directory.Delete(_options.Directory, true);
 
-			TaskInterface.SetStatus("Decompiling");
+			taskInterface.SetStatus("Deleting Old Sources");
+			if (Directory.Exists(options.Directory)) Directory.Delete(options.Directory, true);
 
+
+			taskInterface.SetStatus("Setting projects up");
+			var decompileContext = new DecompileContext(options.CancellationToken, new NoLogger());
+			var projects = new List<Project>();
 
 			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
-
+				foreach (var projectModuleOptions in options.ProjectModules)
+				{
+					Project project = new Project(projectModuleOptions, "Terraria", satelliteAssemblyFinder, options.CreateDecompilerOutput);
+					projects.Add(project);
+					project.CreateProjectFiles(decompileContext);
+				}
 			}
 
-			var items = new List<WorkItem>();
-
-			var serverModule = ReadModule(TerrariaServerPath, serverVersion);
-			var serverSources = GetCodeFiles(serverModule, options).ToList();
-			var serverResources = GetResourceFiles(serverModule, options).ToList();
-
-			var sources = serverSources;
-			var resources = serverResources;
-			var infoModule = serverModule;
-			if (!serverOnly)
+			var jobItems = new List<WorkItem>();
+			jobItems.AddRange(GetJobs(projects).Select((job) =>
 			{
-				var clientModule = !serverOnly ? ReadModule(TerrariaPath, clientVersion) : null;
-				var clientSources = GetCodeFiles(clientModule, options).ToList();
-				var clientResources = GetResourceFiles(clientModule, options).ToList();
+				return new WorkItem("Setting jobs up", () => job.Create(decompileContext));
+			}));
+			ExecuteParallel(jobItems, false, options.NumberOfThreads);
 
-				sources = CombineFiles(clientSources, sources, src => src.Key);
-				resources = CombineFiles(clientResources, resources, res => res.Item1);
-				infoModule = clientModule;
 
-				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension,
-					() => WriteProjectFile(clientModule, clientGuid, clientSources, clientResources, options)));
+			var decompilingItems = new List<WorkItem>();
+			decompilingItems.AddRange(projects.Select((project) =>
+			{
+				return new WorkItem("Decompiling: " + project.Filename, () =>
+				{
+					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
+				});
+			}));
+			ExecuteParallel(decompilingItems, false, options.NumberOfThreads);
 
-				items.Add(new WorkItem("Writing Terraria" + lang.ProjectFileExtension + ".user",
-					() => WriteProjectUserFile(clientModule, SteamDir, options)));
-			}
-
-			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension,
-				() => WriteProjectFile(serverModule, serverGuid, serverSources, serverResources, options)));
-
-			items.Add(new WorkItem("Writing TerrariaServer" + lang.ProjectFileExtension + ".user",
-				() => WriteProjectUserFile(serverModule, SteamDir, options)));
-
-			items.Add(new WorkItem("Writing Assembly Info",
-				() => WriteAssemblyInfo(infoModule, options)));
-
-			items.AddRange(sources.Select(src => new WorkItem(
-				"Decompiling: " + src.Key, () => DecompileSourceFile(src, options))));
-
-			items.AddRange(resources.Select(res => new WorkItem(
-				"Extracting: " + res.Item1, () => ExtractResource(res, options))));
-
-			ExecuteParallel(items, maxDegree: Settings.Default.SingleDecompileThread ? 1 : 0);
+			taskInterface.SetStatus("Creating .sln file");
+			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, options.SolutionFilename)).Write();
 		}
 
-		/////////////////////
-		//    COPYRIGHT    //
-		/////////////////////
-
-		readonly ProjectCreatorOptions options;
-		readonly List<Project> projects = new List<Project>();
-		readonly IMSBuildProgressListener progressListener;
-		int totalProgress;
-
-		public string SolutionFilename => Path.Combine(options.Directory, options.SolutionFilename);
-
-		public void Create()
+		private List<IJob> GetJobs(List<Project> projects)
 		{
-			SatelliteAssemblyFinder satelliteAssemblyFinder = null;
-
-			var opts = new ParallelOptions
+			var jobs = new List<IJob>();
+			projects.ForEach((p) =>
 			{
-				CancellationToken = options.CancellationToken,
-				MaxDegreeOfParallelism = options.NumberOfThreads <= 0 ? Environment.ProcessorCount : options.NumberOfThreads,
-			};
-			var filenameCreator = new FilenameCreator(options.Directory);
-			var ctx = new DecompileContext(options.CancellationToken, logger);
-			satelliteAssemblyFinder = new SatelliteAssemblyFinder();
-			Parallel.ForEach(options.ProjectModules, opts, modOpts => {
-				options.CancellationToken.ThrowIfCancellationRequested();
-				string name;
-				lock (filenameCreator)
-					name = filenameCreator.Create(modOpts.Module);
-				var p = new Project(modOpts, name, satelliteAssemblyFinder, options.CreateDecompilerOutput);
-				lock (projects)
-					projects.Add(p);
-				p.CreateProjectFiles(ctx);
+				jobs.AddRange(p.GetJobs());
 			});
-
-			var jobs = GetJobs().ToArray();
-			bool writeSolutionFile = !string.IsNullOrEmpty(options.SolutionFilename);
-			int maxProgress = jobs.Length + projects.Count;
-			if (writeSolutionFile)
-				maxProgress++;
-			progressListener.SetMaxProgress(maxProgress);
-
-			Parallel.ForEach(GetJobs(), opts, job => {
-				options.CancellationToken.ThrowIfCancellationRequested();
-				try
-				{
-					job.Create(ctx);
-				}
-				catch (OperationCanceledException)
-				{
-					throw;
-				}
-				catch (Exception ex)
-				{
-					var fjob = job as IFileJob;
-					throw new Exception($"{fjob?.Filename}, {job.Description}", ex);
-				}
-				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
-			});
-			Parallel.ForEach(projects, opts, p => {
-				options.CancellationToken.ThrowIfCancellationRequested();
-				try
-				{
-					var writer = new ProjectWriter(p, p.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths);
-					writer.Write();
-				}
-				catch (OperationCanceledException)
-				{
-					throw;
-				}
-				catch (Exception ex)
-				{
-					throw new Exception($"{p.Filename}", ex);
-				}
-				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
-			});
-			if (writeSolutionFile)
-			{
-				options.CancellationToken.ThrowIfCancellationRequested();
-				try
-				{
-					var writer = new SolutionWriter(options.ProjectVersion, projects, SolutionFilename);
-					writer.Write();
-				}
-				catch (OperationCanceledException)
-				{
-					throw;
-				}
-				catch (Exception ex)
-				{
-					throw new Exception($"{SolutionFilename}", ex);
-				}
-				progressListener.SetProgress(Interlocked.Increment(ref totalProgress));
-			}
-			Debug.Assert(totalProgress == maxProgress);
-			progressListener.SetProgress(maxProgress);
-
+			return jobs;
 		}
+	}
 
-		IEnumerable<IJob> GetJobs()
+	//TODO: Should it throw all of the errors?
+	internal class NoLogger : IMSBuildProjectWriterLogger
+	{
+		void IMSBuildProjectWriterLogger.Error(string message)
 		{
-			foreach (var p in projects)
-			{
-				foreach (var j in p.GetJobs())
-					yield return j;
-			}
+			throw new Exception(message);
 		}
-		/////////////////////
-		//    COPYRIGHT    //
-		/////////////////////
 	}
 }

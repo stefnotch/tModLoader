@@ -57,8 +57,7 @@ namespace Terraria.ModLoader.Setup
 		List<string> files;
 		static readonly char PATHS_SEP = Path.PathSeparator;
 
-
-		private ITaskInterface _taskInterface;
+		
 		bool decompileBaml = true;
 		Guid projectGuid = Guid.NewGuid();
 
@@ -67,7 +66,6 @@ namespace Terraria.ModLoader.Setup
 		{
 			files = filesToDecompile;
 			outputDir = outputDirectory;
-			_taskInterface = taskInterface;
 
 			decompilationContext = new DecompilationContext();
 			decompilationContext.CancellationToken = taskInterface.CancellationToken();
