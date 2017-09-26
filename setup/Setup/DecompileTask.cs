@@ -74,45 +74,76 @@ namespace Terraria.ModLoader.Setup
 
 			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
+				//TODO: Remove i
 				int i = 0;
 				foreach (var projectModuleOptions in options.ProjectModules)
 				{
-					Project project = new Project(projectModuleOptions, "Terraria" + (++i), satelliteAssemblyFinder, options.CreateDecompilerOutput);
+					Project project = new Project(projectModuleOptions, Path.Combine(options.Directory, "Terraria" + (++i)), satelliteAssemblyFinder, options.CreateDecompilerOutput);
 					projects.Add(project);
 					project.CreateProjectFiles(decompileContext);
 				}
 			}
 
+
+
 			var jobItems = new List<WorkItem>();
 			jobItems.AddRange(GetJobs(projects).Select((job) =>
 			{
-				return new WorkItem("Setting jobs up", () => job.Create(decompileContext));
+				return new WorkItem("Decompiling: ", () => job.Create(decompileContext));
 			}));
 
-			var decompilingItems = new List<WorkItem>();
-			decompilingItems.AddRange(projects.Select((project) =>
+			var projectItems = new List<WorkItem>();
+			projectItems.AddRange(projects.Select((project) =>
 			{
-				return new WorkItem("Decompiling: " + project.Filename, () =>
+				return new WorkItem("Creating .csproj file for: " + project.Filename, () =>
 				{
 					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
 				});
 			}));
 
-			taskInterface.SetMaxProgress(jobItems.Count + decompilingItems.Count);
+			taskInterface.SetMaxProgress(jobItems.Count + projectItems.Count);
 			progress = 0;
-			ExecuteParallel(jobItems, false, options.NumberOfThreads);
-			ExecuteParallel(decompilingItems, false, options.NumberOfThreads);
 
+
+			//Apparently order independent
+			//.csproj files
+			ExecuteParallel(projectItems, false, options.NumberOfThreads);
+
+			//.sln file
 			taskInterface.SetStatus("Creating .sln file");
 			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, options.SolutionFilename)).Write();
+
+			//Actual source code
+			//ExecuteParallel(jobItems, false, options.NumberOfThreads);
 		}
 
+
+		/// <summary>
+		/// Takes care of the duplicate stuff
+		/// </summary>
 		private List<IJob> GetJobs(List<Project> projects)
 		{
+			var jobNames = new HashSet<string>();
 			var jobs = new List<IJob>();
 			projects.ForEach((p) =>
 			{
-				jobs.AddRange(p.GetJobs());
+				//jobs.AddRange(p.GetJobs());
+				foreach(IJob job in p.GetJobs())
+				{
+					var fileToDecompile = job as ProjectFile;
+					if(fileToDecompile != null)
+					{
+						if (!jobNames.Contains(fileToDecompile.Filename))
+						{
+							jobNames.Add(fileToDecompile.Filename);
+							jobs.Add(job);
+						}
+					}
+					else
+					{
+						jobs.Add(job);
+					}
+				}
 			});
 			return jobs;
 		}
