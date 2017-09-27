@@ -51,6 +51,8 @@ namespace Terraria.ModLoader.Setup
 
 		public override void Run()
 		{
+			//TODO: Use .net 4.6.1 https://stackoverflow.com/questions/31747992/garbage-collection-and-parallel-foreach-issue-after-vs2015-upgrade
+			//https://stackoverflow.com/questions/13671053/nets-multi-threading-vs-multi-processing-awful-parallel-foreach-performance
 			//TODO: TerrariaServer & Terraria decompilation separate
 			taskInterface.SetStatus("Setting up everything");
 
@@ -74,13 +76,18 @@ namespace Terraria.ModLoader.Setup
 
 			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
-				//TODO: Remove i
-				int i = 0;
+				//TODO: Use .net 4.6.1
 				foreach (var projectModuleOptions in options.ProjectModules)
 				{
-					Project project = new Project(projectModuleOptions, Path.Combine(options.Directory, "Terraria" + (++i)), satelliteAssemblyFinder, options.CreateDecompilerOutput);
+					Project project = new Project(projectModuleOptions, Path.Combine(options.Directory, "Terraria"), satelliteAssemblyFinder, options.CreateDecompilerOutput);
 					projects.Add(project);
 					project.CreateProjectFiles(decompileContext);
+
+					
+					//.csproj files
+					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
+					//Rename the files so that their names don't cause a conflict
+					File.Move(project.Filename, Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.FileExtension));
 				}
 			}
 
@@ -89,32 +96,23 @@ namespace Terraria.ModLoader.Setup
 			var jobItems = new List<WorkItem>();
 			jobItems.AddRange(GetJobs(projects).Select((job) =>
 			{
-				return new WorkItem("Decompiling: ", () => job.Create(decompileContext));
+				return new WorkItem(job.Description, () => job.Create(decompileContext));
 			}));
+			
 
-			var projectItems = new List<WorkItem>();
-			projectItems.AddRange(projects.Select((project) =>
-			{
-				return new WorkItem("Creating .csproj file for: " + project.Filename, () =>
-				{
-					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
-				});
-			}));
-
-			taskInterface.SetMaxProgress(jobItems.Count + projectItems.Count);
+			taskInterface.SetMaxProgress(jobItems.Count);
 			progress = 0;
 
 
 			//Apparently order independent
-			//.csproj files
-			ExecuteParallel(projectItems, false, options.NumberOfThreads);
+			
 
 			//.sln file
 			taskInterface.SetStatus("Creating .sln file");
 			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, options.SolutionFilename)).Write();
 
 			//Actual source code
-			//ExecuteParallel(jobItems, false, options.NumberOfThreads);
+			ExecuteParallel(jobItems, false, options.NumberOfThreads);
 		}
 
 
