@@ -170,20 +170,7 @@ namespace Terraria.ModLoader.Setup
 		ProjectCreatorOptions Decompile()
 		{
 			assemblyResolver.UseGAC = useGac;
-			//files[1].Module.Resources --> Merge!
-			//files[1].Module.resources --> Merge?
-			//files[1].Module.Types
-			//files[1].Module.types
 			var files = new List<ProjectModuleOptions>(GetDotNetFiles());
-			if (Merge == true)
-			{
-				RemoveDuplicates(files);
-
-				if(files.Count > 0) files.ForEach((file) => {
-					file.Module.Name = files[0].Module.Name;
-					file.Module.Assembly.Name = files[0].Module.Assembly.Name;
-				});
-			}
 			string guidStr = projectGuid.ToString();
 			int guidNum = int.Parse(guidStr.Substring(36 - 8, 8), NumberStyles.HexNumber);
 			string guidFormat = guidStr.Substring(0, 36 - 8) + "{0:X8}";
@@ -206,43 +193,6 @@ namespace Terraria.ModLoader.Setup
 
 			return options;
 
-		}
-		/// <summary>
-		/// Removes all duplicate resources and all duplicate types
-		/// </summary>
-		private void RemoveDuplicates(List<ProjectModuleOptions> files)
-		{
-			List<string> resourceCache = new List<string>();
-			List<string> typeCache = new List<string>();
-			foreach (ProjectModuleOptions project in files)
-			{
-				for (int i = project.Module.Resources.Count - 1; i >= 0; i--)
-				{
-					if (resourceCache.Contains(project.Module.Resources[i].Name))
-					{
-						project.Module.Resources.RemoveAt(i);
-						//TODO: Invalidate the resource
-					}
-					else
-					{
-						resourceCache.Add(project.Module.Resources[i].Name);
-					}
-				}
-
-				for (int i = project.Module.Types.Count - 1; i >= 0; i--)
-				{
-					if (typeCache.Contains(project.Module.Types[i].FullName))
-					{
-						project.Module.Types.RemoveAt(i);
-						//TODO: Invalidate the type
-					}
-					else
-					{
-						typeCache.Add(project.Module.Types[i].FullName);
-					}
-				}
-				project.Module.ResetTypeDefFindCache();
-			}			
 		}
 
 		Indenter GetIndenter()
@@ -414,9 +364,7 @@ namespace Terraria.ModLoader.Setup
 				numThreads = value;
 			}
 		}
-
-		public bool Merge { get; set; }
-
+		
 		readonly IDecompiler[] allLanguages;
 	}
 }

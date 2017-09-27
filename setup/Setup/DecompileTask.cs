@@ -61,8 +61,7 @@ namespace Terraria.ModLoader.Setup
 
 			ProjectCreatorOptions options = new ProjectOptionsCreator(taskInterface, filesToDecompile, _outputDir)
 			{
-				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0,
-				Merge = true
+				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
 			}.Run();
 
 
@@ -87,7 +86,7 @@ namespace Terraria.ModLoader.Setup
 					//.csproj files
 					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
 					//Rename the files so that their names don't cause a conflict
-					File.Move(project.Filename, Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.FileExtension));
+					File.Move(project.Filename, Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.ProjectFileExtension));
 				}
 			}
 
