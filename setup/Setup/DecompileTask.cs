@@ -78,61 +78,69 @@ namespace Terraria.ModLoader.Setup
 				//TODO: Use .net 4.6.1
 				foreach (var projectModuleOptions in options.ProjectModules)
 				{
-					Project project = new Project(projectModuleOptions, Path.Combine(options.Directory, "Terraria"), satelliteAssemblyFinder, options.CreateDecompilerOutput);
-					projects.Add(project);
+					Project project = new Project(projectModuleOptions, options.Directory, satelliteAssemblyFinder, options.CreateDecompilerOutput);
+					
+
+					//Fixing the filename
+					project.Filename = Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.ProjectFileExtension);
+					//Now, Terraria & TerrariaServer have different "DefaultNamespaces"...fixing that as well
+					project.DefaultNamespace = "";
+
 					project.CreateProjectFiles(decompileContext);
 
-					
-					//.csproj files
-					new ProjectWriter(project, project.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
-					//Rename the files so that their names don't cause a conflict
-					File.Move(project.Filename, Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.ProjectFileExtension));
+					projects.Add(project);
 				}
 			}
 
-
-
-			var jobItems = new List<WorkItem>();
-			jobItems.AddRange(GetJobs(projects).Select((job) =>
+			//.csproj files
+			foreach (Project p in projects)
 			{
-				return new WorkItem(job.Description, () => job.Create(decompileContext));
-			}));
-			
+				taskInterface.SetStatus("Creating " + p.AssemblyName + ".csproj");
+				new ProjectWriter(p, p.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
+			}
 
-			taskInterface.SetMaxProgress(jobItems.Count);
+
+			var decompilationItems = new List<WorkItem>();
+			decompilationItems.AddRange(GetDecompilationItems(projects).Select((decompilationItem) =>
+			{
+				return new WorkItem(decompilationItem.Description, () => decompilationItem.Create(decompileContext));
+			}));
+
+
+			taskInterface.SetMaxProgress(decompilationItems.Count);
 			progress = 0;
 
 
 			//Apparently order independent
 			
-
 			//.sln file
+			//Still has one bug...
 			taskInterface.SetStatus("Creating .sln file");
-			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, options.SolutionFilename)).Write();
+			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, "..", options.SolutionFilename)).Write();
 
-			//Actual source code
-			ExecuteParallel(jobItems, false, options.NumberOfThreads);
+			//Source code decompilation
+			ExecuteParallel(decompilationItems, false, options.NumberOfThreads);
 		}
 
 
 		/// <summary>
 		/// Takes care of the duplicate stuff
 		/// </summary>
-		private List<IJob> GetJobs(List<Project> projects)
+		private List<IJob> GetDecompilationItems(List<Project> projects)
 		{
 			var jobNames = new HashSet<string>();
 			var jobs = new List<IJob>();
 			projects.ForEach((p) =>
 			{
-				//jobs.AddRange(p.GetJobs());
-				foreach(IJob job in p.GetJobs())
+				foreach (IJob job in p.GetJobs())
 				{
 					var fileToDecompile = job as ProjectFile;
-					if(fileToDecompile != null)
+					if (fileToDecompile != null)
 					{
-						if (!jobNames.Contains(fileToDecompile.Filename))
+						string filename = fileToDecompile.Filename;
+						if (!jobNames.Contains(filename))
 						{
-							jobNames.Add(fileToDecompile.Filename);
+							jobNames.Add(filename);
 							jobs.Add(job);
 						}
 					}
