@@ -78,10 +78,6 @@
     <Reference Include="ICSharpCode.NRefactory.CSharp">
       <HintPath>lib\dnSpy\ICSharpCode.NRefactory.CSharp.dll</HintPath>
     </Reference>
-    <Reference Include="ICSharpCode.NRefactory.VB, Version=5.0.0.0, Culture=neutral, PublicKeyToken=d4bfe873e7598c49, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>lib\dnSpy\ICSharpCode.NRefactory.VB.dll</HintPath>
-    </Reference>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
@@ -107,7 +103,7 @@
     <Compile Include="Setup\CompositeTask.cs" />
     <Compile Include="Setup\DecompileTask.cs" />
     <Compile Include="Setup\DiffTask.cs" />
-    <Compile Include="Setup\DnSpyDecompiler.cs" />
+    <Compile Include="Setup\ProjectOptionsCreator.cs" />
     <Compile Include="Setup\FormatTask.cs" />
     <Compile Include="Setup\ITaskInterface.cs" />
     <Compile Include="Setup\MainForm.cs">

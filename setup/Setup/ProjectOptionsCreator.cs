@@ -15,7 +15,8 @@ using System.Threading.Tasks;
 namespace Terraria.ModLoader.Setup
 {
 
-	/*
+    //Used to be DnSpyDecompiler.cs 
+    /*
 	Copyright (C) 2014-2016 de4dot@gmail.com
 
 	This file is part of dnSpy
@@ -33,15 +34,17 @@ namespace Terraria.ModLoader.Setup
 	You should have received a copy of the GNU General Public License
 	along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
-	public sealed class ProjectOptionsCreator
+
+    //Used to be DnSpyDecompiler.cs 
+    //Copy-pasted it and removed a lot of stuff
+    //The licence is still here
+    public sealed class ProjectOptionsCreator
 	{
 		string language = DecompilerConstants.LANGUAGE_CSHARP.ToString();
 
 		ProjectVersion projectVersion = ProjectVersion.VS2015;
 		string outputDir;
 		string slnName = "solution.sln";
-
-		int numThreads = 0; //Default value --> 1 thread per core
 
 		const int spaces = 4;
 
@@ -80,7 +83,7 @@ namespace Terraria.ModLoader.Setup
 			var langs = new List<IDecompiler>();
 			langs.AddRange(GetAllLanguages());
 			langs.Sort((a, b) => a.OrderUI.CompareTo(b.OrderUI));
-			allLanguages = langs.ToArray();
+            allLanguages = langs.ToArray();
 		}
 
 
@@ -184,7 +187,6 @@ namespace Terraria.ModLoader.Setup
 
 			var options = new ProjectCreatorOptions(outputDir, decompilationContext.CancellationToken);
 			options.ProjectVersion = projectVersion;
-			options.NumberOfThreads = numThreads;
 			options.ProjectModules.AddRange(files);
 			options.CreateDecompilerOutput = textWriter => new TextWriterDecompilerOutput(textWriter, GetIndenter());
 			if (!string.IsNullOrEmpty(slnName))
@@ -352,19 +354,6 @@ namespace Terraria.ModLoader.Setup
 
 		IDecompiler[] AllLanguages => allLanguages;
 
-		public int NumThreads
-		{
-			get
-			{
-				return numThreads;
-			}
-
-			set
-			{
-				numThreads = value;
-			}
-		}
-		
 		readonly IDecompiler[] allLanguages;
 	}
 }

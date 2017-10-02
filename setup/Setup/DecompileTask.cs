@@ -51,77 +51,76 @@ namespace Terraria.ModLoader.Setup
 
 		public override void Run()
 		{
-			//TODO: Use .net 4.6.1 https://stackoverflow.com/questions/31747992/garbage-collection-and-parallel-foreach-issue-after-vs2015-upgrade
-			//https://stackoverflow.com/questions/13671053/nets-multi-threading-vs-multi-processing-awful-parallel-foreach-performance
-			//TODO: TerrariaServer & Terraria decompilation separate
-			taskInterface.SetStatus("Setting up everything");
+			/* TODO: Improve performance even more:
+			 * Test those things:
+			https://stackoverflow.com/questions/31747992/garbage-collection-and-parallel-foreach-issue-after-vs2015-upgrade
+			https://stackoverflow.com/questions/13671053/nets-multi-threading-vs-multi-processing-awful-parallel-foreach-performance
+			*/
+			taskInterface.SetStatus("Setting up everything...");
 
 			var filesToDecompile = new List<string> { TerrariaServerPath };
 			if (!_serverOnly) filesToDecompile.Add(TerrariaPath);
 
-			ProjectCreatorOptions options = new ProjectOptionsCreator(taskInterface, filesToDecompile, _outputDir)
-			{
-				NumThreads = Settings.Default.SingleDecompileThread ? 1 : 0
-			}.Run();
+            //A lot of setup stuff...
+			ProjectCreatorOptions options = (new ProjectOptionsCreator(taskInterface, filesToDecompile, _outputDir)).Run();
 
-
-			taskInterface.SetStatus("Deleting Old Sources");
-			if (Directory.Exists(options.Directory)) Directory.Delete(options.Directory, true);
-
+			taskInterface.SetStatus("Deleting old sources");
+			if (Directory.Exists(_outputDir)) Directory.Delete(_outputDir, true);
 
 			taskInterface.SetStatus("Setting projects up");
-			var decompileContext = new DecompileContext(options.CancellationToken, new NoLogger());
-			var projects = new List<Project>();
 
-			using (SatelliteAssemblyFinder satelliteAssemblyFinder = new SatelliteAssemblyFinder())
+            var projects = new List<Project>();
+            var decompileContext = new DecompileContext(taskInterface.CancellationToken(), new NoLogger());
+
+			using (var satelliteAssemblyFinder = new SatelliteAssemblyFinder())
 			{
-				//TODO: Use .net 4.6.1
 				foreach (var projectModuleOptions in options.ProjectModules)
 				{
-					Project project = new Project(projectModuleOptions, options.Directory, satelliteAssemblyFinder, options.CreateDecompilerOutput);
-					
+                    string projectName = projectModuleOptions.Module.Assembly.Name;
+                    taskInterface.SetStatus("Setting " + projectName + "up");
 
-					//Fixing the filename
-					project.Filename = Path.Combine(project.Directory, projectModuleOptions.Module.Assembly.Name + project.Options.Decompiler.ProjectFileExtension);
+                    //Create a Terraria and a TerrariaServer project
+                    var project = new Project(projectModuleOptions, _outputDir, satelliteAssemblyFinder, options.CreateDecompilerOutput);
+
+                    //Some hacks that I have to use to get dnSpy to cooperate & to make the duplication removal work:
+					//Fixing the filename, which ends up fixing the path 
+					project.Filename = Path.Combine(project.Directory, projectName + project.Options.Decompiler.ProjectFileExtension);
+
 					//Now, Terraria & TerrariaServer have different "DefaultNamespaces"...fixing that as well
+                    //If not fixed, Terraria and TerrariaServer will end up in different directories
 					project.DefaultNamespace = "";
 
+                    //Creates all the folders
 					project.CreateProjectFiles(decompileContext);
 
+                    //Add the project to the list of projects
 					projects.Add(project);
 				}
 			}
 
 			//.csproj files
-			foreach (Project p in projects)
+			foreach (var p in projects)
 			{
 				taskInterface.SetStatus("Creating " + p.AssemblyName + ".csproj");
 				new ProjectWriter(p, p.Options.ProjectVersion ?? options.ProjectVersion, projects, options.UserGACPaths).Write();
 			}
+            
+			DecompileFiles(projects, decompileContext);
+		}
 
-
+        /// <summary>
+        /// Decompiles all the .cs files, libraries, etc.
+        /// </summary>
+		private void DecompileFiles(List<Project> projects, DecompileContext context)
+		{
 			var decompilationItems = new List<WorkItem>();
 			decompilationItems.AddRange(GetDecompilationItems(projects).Select((decompilationItem) =>
 			{
-				return new WorkItem(decompilationItem.Description, () => decompilationItem.Create(decompileContext));
+				return new WorkItem(decompilationItem.Description, () => decompilationItem.Create(context));
 			}));
-
-
-			taskInterface.SetMaxProgress(decompilationItems.Count);
-			progress = 0;
-
-
-			//Apparently order independent
-			
-			//.sln file
-			//Still has one bug...
-			taskInterface.SetStatus("Creating .sln file");
-			new SolutionWriter(options.ProjectVersion, projects, Path.Combine(options.Directory, "..", options.SolutionFilename)).Write();
-
-			//Source code decompilation
-			ExecuteParallel(decompilationItems, false, options.NumberOfThreads);
+            
+			ExecuteParallel(decompilationItems, true, Settings.Default.SingleDecompileThread ? 1 : 0);
 		}
-
 
 		/// <summary>
 		/// Takes care of the duplicate stuff
@@ -130,23 +129,27 @@ namespace Terraria.ModLoader.Setup
 		{
 			var jobNames = new HashSet<string>();
 			var jobs = new List<IJob>();
+            //For each possible job
 			projects.ForEach((p) =>
 			{
-				foreach (IJob job in p.GetJobs())
+				foreach (var job in p.GetJobs())
 				{
 					var fileToDecompile = job as ProjectFile;
 					if (fileToDecompile != null)
 					{
 						string filename = fileToDecompile.Filename;
+                        //Check if it is a duplicate
 						if (!jobNames.Contains(filename))
 						{
+                            //If not, add the job
 							jobNames.Add(filename);
 							jobs.Add(job);
 						}
 					}
 					else
 					{
-						jobs.Add(job);
+                        //Non ProjectFile jobs
+                        jobs.Add(job);
 					}
 				}
 			});
